@@ -1,0 +1,56 @@
+services:
+  mongodb:
+    image: mongo:latest
+    container_name: papermind-mongodb
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+    networks:
+      - papermind-net
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: papermind-qdrant
+    restart: unless-stopped
+    volumes:
+      - qdrant_storage:/qdrant/storage
+    networks:
+      - papermind-net
+
+  backend:
+    build: ./server
+    container_name: papermind-backend
+    restart: unless-stopped
+    env_file:
+      - ./server/.env
+    environment:
+      - JWT_SECRET=super_secret_papermind_key_2026
+      - JWT_EXPIRY=7d
+    depends_on:
+      - mongodb
+      - qdrant
+    ports:
+      - "3000:3000"
+    networks:
+      - papermind-net
+
+  frontend:
+    build: ./client
+    container_name: papermind-frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "5173:5173"
+    networks:
+      - papermind-net
+
+volumes:
+  qdrant_storage:
+  mongo_data:
+
+networks:
+  papermind-net:
+    external: true
