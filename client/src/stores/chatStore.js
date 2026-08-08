@@ -1,50 +1,63 @@
 import { create } from "zustand";
 import { toast } from "sonner";
 
+// Canonical key for a set of source IDs, order-independent, used to cache
+// and look up per-selection chat threads.
+const sourceSetKey = (sources) => [...sources].sort().join(",");
+
 const useChatStore = create((set, get) => ({
   messages: [],
   selectedSources: [],
-  // Sources the visible chat messages were actually generated from. Used to
-  // decide whether changing the selection should clear the chat: if the new
-  // selection shares no source with this, it's an unrelated conversation.
-  lastQuerySources: [],
+  // Inactive threads, keyed by sourceSetKey, so switching away from a
+  // selection and later switching back to that exact selection restores
+  // the conversation instead of losing it.
+  threadCache: {},
   isLoading: false,
   currentQuery: "",
 
-  // Clears the chat if the new selection has zero overlap with the sources
-  // the current conversation was built on (and there's a conversation to
-  // clear in the first place).
-  _clearIfSwitchedContext: (newSources) => {
-    const { messages, lastQuerySources } = get();
-    if (messages.length === 0 || lastQuerySources.length === 0) return;
+  // Decides what happens to the visible chat when the selection changes:
+  // - If the new selection still overlaps the current one, the current
+  //   conversation continues (sources were just added/removed, same topic).
+  // - If there's zero overlap, we're switching context: the current thread
+  //   gets cached under its old selection so it can be restored later, and
+  //   any thread previously cached under the new selection is restored (or
+  //   we start fresh if none exists).
+  _handleSelectionChange: (newSources) => {
+    const { selectedSources: oldSources, messages, threadCache } = get();
 
-    const stillOverlaps = newSources.some((id) =>
-      lastQuerySources.includes(id),
-    );
-    if (!stillOverlaps) {
-      set({ messages: [], lastQuerySources: [] });
+    if (newSources.some((id) => oldSources.includes(id))) {
+      set({ selectedSources: newSources });
+      return;
     }
+
+    const updatedCache = { ...threadCache };
+    if (messages.length > 0) {
+      updatedCache[sourceSetKey(oldSources)] = messages;
+    }
+    const restored = updatedCache[sourceSetKey(newSources)] || [];
+    set({
+      selectedSources: newSources,
+      messages: restored,
+      threadCache: updatedCache,
+    });
   },
 
   setSelectedSources: (sources) => {
-    get()._clearIfSwitchedContext(sources);
-    set({ selectedSources: sources });
+    get()._handleSelectionChange(sources);
   },
 
   addSelectedSource: (sourceId) => {
     const currentSources = get().selectedSources;
     if (!currentSources.includes(sourceId)) {
-      const newSources = [...currentSources, sourceId];
-      get()._clearIfSwitchedContext(newSources);
-      set({ selectedSources: newSources });
+      get()._handleSelectionChange([...currentSources, sourceId]);
     }
   },
 
   removeSelectedSource: (sourceId) => {
     const currentSources = get().selectedSources;
-    const newSources = currentSources.filter((id) => id !== sourceId);
-    get()._clearIfSwitchedContext(newSources);
-    set({ selectedSources: newSources });
+    get()._handleSelectionChange(
+      currentSources.filter((id) => id !== sourceId),
+    );
   },
 
   addMessage: (message) => {
@@ -100,7 +113,6 @@ const useChatStore = create((set, get) => ({
         };
 
         get().addMessage(assistantMessage);
-        set({ lastQuerySources: selectedSources });
 
         // Update user credits in auth store if available
         if (window.useAuthStore) {
@@ -127,9 +139,13 @@ const useChatStore = create((set, get) => ({
     }
   },
 
-  // Clear chat history
+  // Clear chat history (explicit user action - also drops the cached
+  // thread for the current selection, so reselecting it won't resurrect it)
   clearChat: () => {
-    set({ messages: [] });
+    const { selectedSources, threadCache } = get();
+    const updatedCache = { ...threadCache };
+    delete updatedCache[sourceSetKey(selectedSources)];
+    set({ messages: [], threadCache: updatedCache });
   },
 
   // Clear all chat data
@@ -137,7 +153,7 @@ const useChatStore = create((set, get) => ({
     set({
       messages: [],
       selectedSources: [],
-      lastQuerySources: [],
+      threadCache: {},
       isLoading: false,
       currentQuery: "",
     });
