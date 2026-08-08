@@ -1,5 +1,5 @@
 import { CheerioWebBaseLoader } from "@langchain/community/document_loaders/web/cheerio";
-import { YoutubeLoader } from "@langchain/community/document_loaders/web/youtube";
+import { YoutubeTranscript } from "youtube-transcript";
 import * as cheerio from "cheerio";
 
 // Load and process webpage using LangChain
@@ -227,7 +227,16 @@ const formatContentWithUrls = (content, urls) => {
   return enhancedContent;
 };
 
-// Load YouTube video transcript using LangChain
+// Load YouTube video transcript.
+//
+// Uses the `youtube-transcript` package (fetches captions via the video's
+// timedtext endpoint) rather than LangChain's YoutubeLoader, which calls
+// YouTube's internal Innertube `get_transcript` API via youtubei.js. That
+// API increasingly requires a proof-of-origin token for automated clients
+// and started returning 400s for every request during testing. The
+// timedtext-based approach isn't subject to that gate. Video metadata
+// (title/author) comes from YouTube's public oEmbed endpoint, which is
+// meant for embed cards and imposes no such restriction.
 const loadYouTubeVideo = async (url) => {
   try {
     // Validate YouTube URL format
@@ -235,50 +244,44 @@ const loadYouTubeVideo = async (url) => {
       throw new Error("Invalid YouTube URL format");
     }
 
-    // Use LangChain YoutubeLoader
-    const loader = YoutubeLoader.createFromUrl(url, {
-      language: "en",
-      addVideoInfo: true,
-    });
+    const videoId = extractVideoId(url);
+    if (!videoId) {
+      throw new Error("Could not extract video ID from URL");
+    }
 
-    // Load documents (transcript)
-    const docs = await loader.load();
+    const [transcriptSegments, oembed] = await Promise.all([
+      fetchTranscriptPreferEnglish(videoId),
+      fetchYouTubeOEmbed(url),
+    ]);
 
-    if (!docs || docs.length === 0) {
+    if (!transcriptSegments || transcriptSegments.length === 0) {
       throw new Error("No transcript available for this video");
     }
 
-    // Get the main document (transcript)
-    const doc = docs[0];
-    const transcript = doc.pageContent;
+    const transcript = transcriptSegments.map((seg) => seg.text).join(" ");
 
     if (!transcript || transcript.trim().length < 50) {
       throw new Error("Transcript is too short or incomplete");
     }
 
-    // Clean transcript
     const cleanTranscript = cleanTranscriptText(transcript);
-
-    // Extract metadata
-    const metadata = doc.metadata || {};
-    const videoId = extractVideoId(url);
 
     return {
       videoId,
       videoUrl: url,
-      videoTitle: metadata.title || `YouTube Video ${videoId}`,
+      videoTitle: oembed?.title || `YouTube Video ${videoId}`,
       transcript: cleanTranscript,
-      duration: metadata.length || "Unknown",
-      author: metadata.author || "Unknown",
-      description: metadata.description || "",
-      metadata,
+      duration: "Unknown",
+      author: oembed?.author_name || "Unknown",
+      description: "",
+      metadata: oembed || {},
     };
   } catch (error) {
     // Handle specific YouTube errors
-    if (error.message.includes("Transcript is disabled")) {
+    if (error.message.includes("disabled")) {
       throw new Error("Transcript is disabled for this video");
     }
-    if (error.message.includes("Video unavailable")) {
+    if (error.message.includes("unavailable")) {
       throw new Error("Video is unavailable or private");
     }
     if (error.message.includes("quota exceeded")) {
@@ -286,6 +289,29 @@ const loadYouTubeVideo = async (url) => {
     }
 
     throw new Error(`Error loading YouTube video: ${error.message}`);
+  }
+};
+
+// Try English captions first; fall back to whatever's available (e.g. the
+// video only has auto-captions in another language) rather than failing.
+const fetchTranscriptPreferEnglish = async (videoId) => {
+  try {
+    return await YoutubeTranscript.fetchTranscript(videoId, { lang: "en" });
+  } catch {
+    return await YoutubeTranscript.fetchTranscript(videoId);
+  }
+};
+
+// Fetch video title/author via YouTube's public oEmbed endpoint (no auth,
+// no bot-detection - it's designed for embed cards on third-party sites).
+const fetchYouTubeOEmbed = async (url) => {
+  try {
+    const oembedUrl = `https://www.youtube.com/oembed?url=${encodeURIComponent(url)}&format=json`;
+    const res = await fetch(oembedUrl);
+    if (!res.ok) return null;
+    return await res.json();
+  } catch {
+    return null;
   }
 };
 
