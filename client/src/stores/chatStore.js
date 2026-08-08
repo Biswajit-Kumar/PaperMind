@@ -4,23 +4,47 @@ import { toast } from "sonner";
 const useChatStore = create((set, get) => ({
   messages: [],
   selectedSources: [],
+  // Sources the visible chat messages were actually generated from. Used to
+  // decide whether changing the selection should clear the chat: if the new
+  // selection shares no source with this, it's an unrelated conversation.
+  lastQuerySources: [],
   isLoading: false,
   currentQuery: "",
 
+  // Clears the chat if the new selection has zero overlap with the sources
+  // the current conversation was built on (and there's a conversation to
+  // clear in the first place).
+  _clearIfSwitchedContext: (newSources) => {
+    const { messages, lastQuerySources } = get();
+    if (messages.length === 0 || lastQuerySources.length === 0) return;
+
+    const stillOverlaps = newSources.some((id) =>
+      lastQuerySources.includes(id),
+    );
+    if (!stillOverlaps) {
+      set({ messages: [], lastQuerySources: [] });
+    }
+  },
+
   setSelectedSources: (sources) => {
+    get()._clearIfSwitchedContext(sources);
     set({ selectedSources: sources });
   },
 
   addSelectedSource: (sourceId) => {
     const currentSources = get().selectedSources;
     if (!currentSources.includes(sourceId)) {
-      set({ selectedSources: [...currentSources, sourceId] });
+      const newSources = [...currentSources, sourceId];
+      get()._clearIfSwitchedContext(newSources);
+      set({ selectedSources: newSources });
     }
   },
 
   removeSelectedSource: (sourceId) => {
     const currentSources = get().selectedSources;
-    set({ selectedSources: currentSources.filter((id) => id !== sourceId) });
+    const newSources = currentSources.filter((id) => id !== sourceId);
+    get()._clearIfSwitchedContext(newSources);
+    set({ selectedSources: newSources });
   },
 
   addMessage: (message) => {
@@ -76,6 +100,7 @@ const useChatStore = create((set, get) => ({
         };
 
         get().addMessage(assistantMessage);
+        set({ lastQuerySources: selectedSources });
 
         // Update user credits in auth store if available
         if (window.useAuthStore) {
@@ -112,6 +137,7 @@ const useChatStore = create((set, get) => ({
     set({
       messages: [],
       selectedSources: [],
+      lastQuerySources: [],
       isLoading: false,
       currentQuery: "",
     });
