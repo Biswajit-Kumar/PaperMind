@@ -1,0 +1,8 @@
+{
+  "rewrites": [
+    {
+      "source": "/api/(.*)",
+      "destination": "https://papermind-backend-ukbh.onrender.com/api/$1"
+    }
+  ]
+}
