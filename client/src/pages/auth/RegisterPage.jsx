@@ -209,7 +209,7 @@ export default function RegisterPage() {
       </form>
 
       {/* Benefits */}
-      <div className="mt-6 p-4 bg-secondary-foreground rounded-lg">
+      <div className="mt-6 p-4 bg-secondary rounded-lg">
         <h3 className="font-medium text-card-foreground mb-2">What you get:</h3>
         <ul className="text-sm text-muted-foreground space-y-1">
           <li>• 20 free credits to get started</li>
