@@ -45,12 +45,12 @@ const registerUser = async (req, res) => {
 
     // send email
     const transporter = nodemailer.createTransport({
-      host: process.env.MAILTRAP_HOST,
-      port: process.env.MAILTRAP_PORT,
+      host: process.env.SMTP_HOST,
+      port: process.env.SMTP_PORT,
       secure: false,
       auth: {
-        user: process.env.MAILTRAP_USERNAME,
-        pass: process.env.MAILTRAP_PASSWORD,
+        user: process.env.SMTP_USERNAME,
+        pass: process.env.SMTP_PASSWORD,
       },
     });
 
@@ -58,7 +58,7 @@ const registerUser = async (req, res) => {
       process.env.FRONTEND_URL || "http://localhost:5173"
     }/verify/${token}`;
     const mailOption = {
-      from: process.env.MAILTRAP_SENDEREMAIL,
+      from: process.env.SMTP_SENDEREMAIL,
       to: user.email,
       subject: "Verify ✔ your email",
       text: `Please click on the following link: ${verifyUrl}`,
@@ -429,12 +429,12 @@ const forgotPassword = async (req, res) => {
 
     // Send email
     const transporter = nodemailer.createTransport({
-      host: process.env.MAILTRAP_HOST,
-      port: process.env.MAILTRAP_PORT,
+      host: process.env.SMTP_HOST,
+      port: process.env.SMTP_PORT,
       secure: false,
       auth: {
-        user: process.env.MAILTRAP_USERNAME,
-        pass: process.env.MAILTRAP_PASSWORD,
+        user: process.env.SMTP_USERNAME,
+        pass: process.env.SMTP_PASSWORD,
       },
     });
 
@@ -442,7 +442,7 @@ const forgotPassword = async (req, res) => {
       process.env.FRONTEND_URL || "http://localhost:5173"
     }/reset-password/${resetToken}`;
     const mailOption = {
-      from: process.env.MAILTRAP_SENDEREMAIL,
+      from: process.env.SMTP_SENDEREMAIL,
       to: user.email,
       subject: "Password Reset Request",
       text: `Please click on the following link to reset your password: ${resetUrl}`,

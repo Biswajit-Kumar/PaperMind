@@ -462,7 +462,7 @@ User Action
 2. **Email Service Integration**
 
    - **Nodemailer**: User verification and password reset
-   - **SMTP Configuration**: Mailtrap for development
+   - **SMTP Configuration**: Resend (free tier, real delivery via plain SMTP)
 
 3. **Vector Database Integration**
    - **Qdrant**: High-performance vector similarity search
@@ -716,12 +716,13 @@ QDRANT_HOST=localhost
 QDRANT_PORT=6333
 QDRANT_API_KEY=your-qdrant-api-key-optional
 
-# Email Configuration (for user verification)
-MAILTRAP_HOST=smtp.mailtrap.io
-MAILTRAP_PORT=2525
-MAILTRAP_USERNAME=your-mailtrap-username
-MAILTRAP_PASSWORD=your-mailtrap-password
-MAILTRAP_SENDEREMAIL=noreply@PaperMind.com
+# Email Configuration (for user verification - Resend's SMTP relay,
+# or any other SMTP provider)
+SMTP_HOST=smtp.resend.com
+SMTP_PORT=587
+SMTP_USERNAME=resend
+SMTP_PASSWORD=your-resend-api-key
+SMTP_SENDEREMAIL=onboarding@resend.dev
 
 # Credit System Configuration
 CHARACTERS_PER_TOKEN=4
@@ -751,9 +752,9 @@ VITE_APP_VERSION=1.0.0
 | `GEMINI_API_KEY`       | Gemini API key for AI features | Yes      | -         |
 | `QDRANT_HOST`          | Qdrant vector database host    | No       | localhost |
 | `QDRANT_PORT`          | Qdrant vector database port    | No       | 6333      |
-| `MAILTRAP_HOST`        | SMTP server host for emails    | Yes      | -         |
-| `MAILTRAP_USERNAME`    | SMTP username                  | Yes      | -         |
-| `MAILTRAP_PASSWORD`    | SMTP password                  | Yes      | -         |
+| `SMTP_HOST`            | SMTP server host for emails    | Yes      | -         |
+| `SMTP_USERNAME`        | SMTP username                  | Yes      | -         |
+| `SMTP_PASSWORD`        | SMTP password / API key        | Yes      | -         |
 | `CHARACTERS_PER_TOKEN` | Characters per token estimate  | No       | 4         |
 | `TOKENS_PER_CREDIT`    | Tokens per credit conversion   | No       | 1000      |
 
