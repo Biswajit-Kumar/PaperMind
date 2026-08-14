@@ -462,7 +462,7 @@ User Action
 2. **Email Service Integration**
 
    - **Nodemailer**: User verification and password reset
-   - **SMTP Configuration**: Resend (free tier, real delivery via plain SMTP)
+   - **API Configuration**: Resend HTTP API (free tier, real delivery over HTTPS - not SMTP, since many cloud hosts block outbound SMTP ports)
 
 3. **Vector Database Integration**
    - **Qdrant**: High-performance vector similarity search
@@ -716,13 +716,10 @@ QDRANT_HOST=localhost
 QDRANT_PORT=6333
 QDRANT_API_KEY=your-qdrant-api-key-optional
 
-# Email Configuration (for user verification - Resend's SMTP relay,
-# or any other SMTP provider)
-SMTP_HOST=smtp.resend.com
-SMTP_PORT=587
-SMTP_USERNAME=resend
-SMTP_PASSWORD=your-resend-api-key
-SMTP_SENDEREMAIL=onboarding@resend.dev
+# Email Configuration (Resend HTTP API - avoids cloud hosts that
+# block outbound SMTP ports, e.g. Render's free tier)
+RESEND_API_KEY=your-resend-api-key
+EMAIL_FROM=onboarding@resend.dev
 
 # Credit System Configuration
 CHARACTERS_PER_TOKEN=4
@@ -752,9 +749,8 @@ VITE_APP_VERSION=1.0.0
 | `GEMINI_API_KEY`       | Gemini API key for AI features | Yes      | -         |
 | `QDRANT_HOST`          | Qdrant vector database host    | No       | localhost |
 | `QDRANT_PORT`          | Qdrant vector database port    | No       | 6333      |
-| `SMTP_HOST`            | SMTP server host for emails    | Yes      | -         |
-| `SMTP_USERNAME`        | SMTP username                  | Yes      | -         |
-| `SMTP_PASSWORD`        | SMTP password / API key        | Yes      | -         |
+| `RESEND_API_KEY`       | Resend API key for emails      | Yes      | -         |
+| `EMAIL_FROM`           | Sender address for emails      | Yes      | -         |
 | `CHARACTERS_PER_TOKEN` | Characters per token estimate  | No       | 4         |
 | `TOKENS_PER_CREDIT`    | Tokens per credit conversion   | No       | 1000      |
 

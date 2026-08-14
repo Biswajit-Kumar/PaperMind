@@ -3,10 +3,10 @@ import User from "../model/User.model.js";
 import Notebook from "../model/Notebook.model.js";
 import Content from "../model/Content.model.js";
 import crypto from "crypto";
-import nodemailer from "nodemailer";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import { deleteCollection } from "../services/qdrant.service.js";
+import { sendEmail } from "../services/email.service.js";
 import fs from "fs/promises";
 import path from "path";
 
@@ -44,28 +44,16 @@ const registerUser = async (req, res) => {
     await user.save();
 
     // send email
-    const transporter = nodemailer.createTransport({
-      host: process.env.SMTP_HOST,
-      port: process.env.SMTP_PORT,
-      secure: false,
-      auth: {
-        user: process.env.SMTP_USERNAME,
-        pass: process.env.SMTP_PASSWORD,
-      },
-    });
-
     const verifyUrl = `${
       process.env.FRONTEND_URL || "http://localhost:5173"
     }/verify/${token}`;
-    const mailOption = {
-      from: process.env.SMTP_SENDEREMAIL,
+
+    await sendEmail({
       to: user.email,
       subject: "Verify ✔ your email",
       text: `Please click on the following link: ${verifyUrl}`,
       html: `<p>Please verify your email by clicking <a href="${verifyUrl}">this link</a>.</p>`,
-    };
-
-    await transporter.sendMail(mailOption);
+    });
 
     res.status(200).json({
       message: "User registered successfully",
@@ -428,28 +416,16 @@ const forgotPassword = async (req, res) => {
     await user.save();
 
     // Send email
-    const transporter = nodemailer.createTransport({
-      host: process.env.SMTP_HOST,
-      port: process.env.SMTP_PORT,
-      secure: false,
-      auth: {
-        user: process.env.SMTP_USERNAME,
-        pass: process.env.SMTP_PASSWORD,
-      },
-    });
-
     const resetUrl = `${
       process.env.FRONTEND_URL || "http://localhost:5173"
     }/reset-password/${resetToken}`;
-    const mailOption = {
-      from: process.env.SMTP_SENDEREMAIL,
+
+    await sendEmail({
       to: user.email,
       subject: "Password Reset Request",
       text: `Please click on the following link to reset your password: ${resetUrl}`,
       html: `<p>Please reset your password by clicking <a href="${resetUrl}">this link</a>.</p><p>This link expires in 10 minutes.</p>`,
-    };
-
-    await transporter.sendMail(mailOption);
+    });
 
     res.status(200).json({
       message: "Password reset email sent successfully",
