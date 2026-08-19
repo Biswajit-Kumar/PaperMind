@@ -20,13 +20,14 @@ export default function NotebookPage() {
     fetchNotebook,
     clearCurrentNotebook,
   } = useNotebookStore();
-  const { clearChatData } = useChatStore();
+  const { clearChatData, setCurrentNotebook } = useChatStore();
   const [isAddContentOpen, setIsAddContentOpen] = useState(false);
   const [showMobileChat, setShowMobileChat] = useState(false);
 
   useEffect(() => {
     if (id) {
       fetchNotebook(id);
+      setCurrentNotebook(id);
     }
 
     // Cleanup when component unmounts
@@ -34,7 +35,7 @@ export default function NotebookPage() {
       clearCurrentNotebook();
       clearChatData();
     };
-  }, [id, fetchNotebook, clearCurrentNotebook, clearChatData]);
+  }, [id, fetchNotebook, clearCurrentNotebook, clearChatData, setCurrentNotebook]);
 
   const handleBack = () => {
     navigate("/app/dashboard");
