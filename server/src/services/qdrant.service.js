@@ -2,9 +2,11 @@ import { QdrantVectorStore } from "@langchain/qdrant";
 import { embeddings } from "./embeddings.service.js";
 
 const qdrantConfig = {
-  url: `http://${process.env.QDRANT_HOST || "localhost"}:${
-    process.env.QDRANT_PORT || 6333
-  }`,
+  url:
+    process.env.QDRANT_URL ||
+    `http://${process.env.QDRANT_HOST || "localhost"}:${
+      process.env.QDRANT_PORT || 6333
+    }`,
   apiKey: process.env.QDRANT_API_KEY || undefined,
 };
 
