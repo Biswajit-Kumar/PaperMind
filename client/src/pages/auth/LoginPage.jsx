@@ -210,7 +210,6 @@ export default function LoginPage() {
             });
 
             await trigger(); // clears validation errors immediately
-            onSubmit({ email: "demo@papermind.local", password: "biswa@123" });
           }}
         >
           Use Demo Account
