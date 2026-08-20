@@ -1,12 +1,14 @@
 import { useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import { ArrowLeft, Plus, MessageSquare, FileText } from "lucide-react";
+import { ArrowLeft, Plus, MessageSquare, FileText, History } from "lucide-react";
 
 import useNotebookStore from "@/stores/notebookStore";
 import useChatStore from "@/stores/chatStore";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import SourcesPanel from "@/components/notebook/SourcesPanel";
+import ChatHistoryPanel from "@/components/notebook/ChatHistoryPanel";
 import ChatPanel from "@/components/notebook/ChatPanel";
 import AddContentDialog from "@/components/notebook/AddContentDialog";
 
@@ -122,32 +124,35 @@ export default function NotebookPage() {
             showMobileChat ? "hidden md:block" : "block"
           }`}
         >
-          <div className="h-full flex flex-col">
-            <div className="p-4 border-b border-border bg-card/50">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2 min-w-0 flex-1">
-                  <FileText className="h-4 w-4 text-primary flex-shrink-0" />
-                  <h2 className="font-semibold text-card-foreground">
-                    Sources
-                  </h2>
-                </div>
-                <div className="flex items-center gap-2 flex-shrink-0">
-                  <Badge variant="secondary">{contents.length}</Badge>
-                </div>
-              </div>
-              <p className="text-xs text-muted-foreground mt-1">
-                Select sources to chat with your documents
-              </p>
+          <Tabs defaultValue="sources" className="h-full flex flex-col gap-0">
+            <div className="p-2 border-b border-border bg-card/50">
+              <TabsList className="w-full grid grid-cols-2">
+                <TabsTrigger value="sources">
+                  <FileText className="h-4 w-4 mr-1.5" />
+                  Sources
+                  <Badge variant="secondary" className="ml-1.5">
+                    {contents.length}
+                  </Badge>
+                </TabsTrigger>
+                <TabsTrigger value="history">
+                  <History className="h-4 w-4 mr-1.5" />
+                  History
+                </TabsTrigger>
+              </TabsList>
             </div>
 
-            <div className="flex-1 overflow-hidden">
+            <TabsContent value="sources" className="flex-1 overflow-hidden mt-0">
               <SourcesPanel
                 contents={contents}
                 notebookId={id}
                 onAddContent={() => setIsAddContentOpen(true)}
               />
-            </div>
-          </div>
+            </TabsContent>
+
+            <TabsContent value="history" className="flex-1 overflow-hidden mt-0">
+              <ChatHistoryPanel notebookId={id} />
+            </TabsContent>
+          </Tabs>
         </div>
 
         {/* Chat Panel - Right Side (Desktop) / Toggle Panel (Mobile) */}

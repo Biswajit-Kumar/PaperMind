@@ -38,6 +38,11 @@ const useChatStore = create((set, get) => ({
   // the conversation instead of losing it. A session-local fast path in
   // front of the persisted (database-backed) history.
   threadCache: {},
+  // Sidebar list: one entry per distinct source-selection ever chatted
+  // with in this notebook, newest first. Separate from threadCache, which
+  // holds the actual messages.
+  threads: [],
+  isLoadingThreads: false,
   isLoading: false,
   isLoadingHistory: false,
   currentQuery: "",
@@ -50,7 +55,25 @@ const useChatStore = create((set, get) => ({
       messages: [],
       selectedSources: [],
       threadCache: {},
+      threads: [],
     });
+    get().fetchThreads(notebookId);
+  },
+
+  fetchThreads: async (notebookId) => {
+    set({ isLoadingThreads: true });
+    try {
+      const res = await fetch(`/api/v1/chat/threads/${notebookId}`, {
+        credentials: "include",
+      });
+      const result = await res.json();
+      set({
+        threads: result.success ? result.threads : [],
+        isLoadingThreads: false,
+      });
+    } catch {
+      set({ isLoadingThreads: false });
+    }
   },
 
   // Decides what happens to the visible chat when the selection changes:
@@ -197,6 +220,7 @@ const useChatStore = create((set, get) => ({
         }
 
         set({ currentQuery: "", isLoading: false });
+        get().fetchThreads(notebookId);
         return { success: true, response: result.response };
       } else {
         toast.error(result.message || "Failed to process query");
@@ -225,6 +249,7 @@ const useChatStore = create((set, get) => ({
           `/api/v1/chat/history/${currentNotebookId}?sourceIds=${selectedSources.join(",")}`,
           { method: "DELETE", credentials: "include" },
         );
+        get().fetchThreads(currentNotebookId);
       } catch {
         // Local state is already cleared; a failed server delete just means
         // the history could reappear on a future reselect - not fatal.
@@ -239,6 +264,8 @@ const useChatStore = create((set, get) => ({
       messages: [],
       selectedSources: [],
       threadCache: {},
+      threads: [],
+      isLoadingThreads: false,
       isLoading: false,
       isLoadingHistory: false,
       currentQuery: "",

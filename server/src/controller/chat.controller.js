@@ -1,9 +1,13 @@
+import mongoose from "mongoose";
 import User from "../model/User.model.js";
 import Notebook from "../model/Notebook.model.js";
 import Content from "../model/Content.model.js";
 import ChatMessage from "../model/ChatMessage.model.js";
 import { processQuery } from "../services/chat.service.js";
 import { calculateCredits } from "../services/embeddings.service.js";
+
+const truncate = (text, max) =>
+  text.length > max ? text.slice(0, max).trimEnd() + "…" : text;
 
 // Order-independent key for a set of source IDs - must match the frontend's
 // sourceSetKey() in client/src/stores/chatStore.js exactly, since it's how
@@ -182,6 +186,84 @@ const getChatHistory = async (req, res) => {
   }
 };
 
+// List every saved conversation thread in a notebook (one entry per
+// distinct source-selection that's ever been chatted with), newest first -
+// powers the chat history sidebar. Titles are built for free from real data
+// (the sources' own titles + the thread's first question) rather than an
+// extra summarization call.
+const listChatThreads = async (req, res) => {
+  try {
+    const { notebookId } = req.params;
+    const userId = req.user.id;
+
+    const notebook = await Notebook.findOne({ _id: notebookId, userId });
+    if (!notebook) {
+      return res.status(404).json({
+        success: false,
+        message: "Notebook not found",
+      });
+    }
+
+    const threads = await ChatMessage.aggregate([
+      {
+        $match: {
+          userId: new mongoose.Types.ObjectId(userId),
+          notebookId: new mongoose.Types.ObjectId(notebookId),
+        },
+      },
+      { $sort: { createdAt: 1 } },
+      {
+        $group: {
+          _id: "$sourceKey",
+          sourceIds: { $first: "$sourceIds" },
+          firstQuestion: { $first: "$content" },
+          lastMessageAt: { $last: "$createdAt" },
+          messageCount: { $sum: 1 },
+        },
+      },
+      { $sort: { lastMessageAt: -1 } },
+    ]);
+
+    const allSourceIds = [
+      ...new Set(threads.flatMap((t) => t.sourceIds.map(String))),
+    ];
+    const contents = await Content.find(
+      { _id: { $in: allSourceIds } },
+      { title: 1 },
+    );
+    const titleById = Object.fromEntries(
+      contents.map((c) => [c._id.toString(), c.title]),
+    );
+
+    const result = threads.map((t) => {
+      const sourceTitles = t.sourceIds.map(
+        (id) => titleById[id.toString()] || "Deleted source",
+      );
+      const sourceLabel =
+        sourceTitles.length > 2
+          ? `${sourceTitles.slice(0, 2).join(", ")} +${sourceTitles.length - 2}`
+          : sourceTitles.join(", ");
+
+      return {
+        sourceKey: t._id,
+        sourceIds: t.sourceIds,
+        title: `${sourceLabel} — ${truncate(t.firstQuestion, 60)}`,
+        lastMessageAt: t.lastMessageAt,
+        messageCount: t.messageCount,
+      };
+    });
+
+    res.status(200).json({ success: true, threads: result });
+  } catch (error) {
+    console.error("List chat threads error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Error listing chat threads",
+      error: error.message,
+    });
+  }
+};
+
 // Delete saved chat history for a notebook + exact source selection
 // (used by the explicit "clear chat" action, so it stays cleared instead of
 // reappearing next time these same sources are reselected)
@@ -213,4 +295,4 @@ const deleteChatHistory = async (req, res) => {
   }
 };
 
-export { queryDocuments, getChatHistory, deleteChatHistory };
+export { queryDocuments, getChatHistory, listChatThreads, deleteChatHistory };
