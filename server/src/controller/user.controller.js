@@ -5,10 +5,28 @@ import Content from "../model/Content.model.js";
 import crypto from "crypto";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
+import { OAuth2Client } from "google-auth-library";
 import { deleteCollection } from "../services/qdrant.service.js";
 import { sendEmail } from "../services/email.service.js";
 import fs from "fs/promises";
 import path from "path";
+
+const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
+
+// Signs and cookies a JWT for a user the same way normal login does
+const issueSession = (res, user) => {
+  const token = jwt.sign({ id: user._id }, process.env.JWT_SECRET, {
+    expiresIn: process.env.JWT_EXPIRY,
+  });
+
+  res.cookie("token", token, {
+    httpOnly: true,
+    secure: true,
+    maxAge: 24 * 60 * 60 * 1000,
+  });
+
+  return token;
+};
 
 const registerUser = async (req, res) => {
   const { name, email, password } = req.body;
@@ -119,6 +137,12 @@ const login = async (req, res) => {
       });
     }
 
+    if (user.authProvider === "google") {
+      return res.status(400).json({
+        message: "This account uses Google sign-in - use the Google button instead",
+      });
+    }
+
     const isMatch = await bcrypt.compare(password, user.password);
 
     if (!isMatch) {
@@ -133,17 +157,7 @@ const login = async (req, res) => {
       });
     }
 
-    const token = jwt.sign({ id: user._id }, process.env.JWT_SECRET, {
-      expiresIn: process.env.JWT_EXPIRY,
-    });
-
-    const cookieOptions = {
-      httpOnly: true,
-      secure: true,
-      maxAge: 24 * 60 * 60 * 1000,
-    };
-
-    res.cookie("token", token, cookieOptions);
+    const token = issueSession(res, user);
 
     res.status(200).json({
       success: true,
@@ -160,6 +174,70 @@ const login = async (req, res) => {
       message: "Error logging in",
       err,
       success: false,
+    });
+  }
+};
+
+// Sign in (or sign up, on first use) with a Google ID token obtained by the
+// frontend's Google Identity Services button. Google has already verified
+// the user's email, so these accounts skip our own verification step.
+const googleAuthUser = async (req, res) => {
+  const { credential } = req.body;
+
+  if (!credential) {
+    return res.status(400).json({
+      success: false,
+      message: "Google credential is required",
+    });
+  }
+
+  try {
+    const ticket = await googleClient.verifyIdToken({
+      idToken: credential,
+      audience: process.env.GOOGLE_CLIENT_ID,
+    });
+    const payload = ticket.getPayload();
+
+    let user = await User.findOne({
+      $or: [{ googleId: payload.sub }, { email: payload.email }],
+    });
+
+    if (user) {
+      // A local account with this email is signing in with Google for the
+      // first time - link it rather than creating a duplicate.
+      if (!user.googleId) {
+        user.googleId = payload.sub;
+        user.authProvider = "google";
+        user.isVerified = true;
+        await user.save();
+      }
+    } else {
+      user = await User.create({
+        name: payload.name,
+        email: payload.email,
+        googleId: payload.sub,
+        authProvider: "google",
+        isVerified: true,
+      });
+    }
+
+    const token = issueSession(res, user);
+
+    res.status(200).json({
+      success: true,
+      message: "Login successful",
+      token,
+      user: {
+        id: user._id,
+        name: user.name,
+        role: user.role,
+      },
+    });
+  } catch (err) {
+    res.status(401).json({
+      success: false,
+      message: "Google sign-in failed",
+      err: err.message,
     });
   }
 };
@@ -518,6 +596,7 @@ export {
   registerUser,
   verifyUser,
   login,
+  googleAuthUser,
   getProfile,
   updateProfile,
   changePassword,

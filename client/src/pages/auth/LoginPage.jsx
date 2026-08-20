@@ -7,6 +7,7 @@ import { Eye, EyeOff, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 
 import AuthLayout from "@/components/auth/AuthLayout";
+import GoogleSignInButton from "@/components/auth/GoogleSignInButton";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -30,6 +31,32 @@ export default function LoginPage() {
   } = useForm({
     resolver: zodResolver(loginSchema),
   });
+
+  const handleGoogleCredential = async (credential) => {
+    setIsLoading(true);
+
+    try {
+      const response = await fetch("/api/v1/users/google", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ credential }),
+      });
+
+      const result = await response.json();
+
+      if (result.success) {
+        toast.success("Welcome!");
+        navigate("/app/dashboard");
+      } else {
+        toast.error(result.message || "Google sign-in failed.");
+      }
+    } catch {
+      toast.error("Something went wrong. Please try again.");
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   const onSubmit = async (data) => {
     setIsLoading(true);
@@ -135,6 +162,19 @@ export default function LoginPage() {
           )}
         </Button>
 
+        {/* Divider */}
+        <div className="relative py-2">
+          <div className="absolute inset-0 flex items-center">
+            <span className="w-full border-t border-border" />
+          </div>
+          <div className="relative flex justify-center text-xs uppercase">
+            <span className="bg-card px-2 text-muted-foreground">Or</span>
+          </div>
+        </div>
+
+        {/* Google Sign-In */}
+        <GoogleSignInButton onCredential={handleGoogleCredential} />
+
         {/* Register Link */}
         <div className="text-center text-sm">
           <span className="text-muted-foreground">Don't have an account? </span>
@@ -157,18 +197,20 @@ export default function LoginPage() {
           variant="outline"
           size="sm"
           className="w-full"
-           onClick={async () => {
+          disabled={isLoading}
+          onClick={async () => {
             setValue("email", "demo@papermind.local", {
               shouldValidate: true,
               shouldDirty: true,
             });
 
-            setValue("password", "aryan@1234", {
+            setValue("password", "biswa@123", {
               shouldValidate: true,
               shouldDirty: true,
             });
 
             await trigger(); // clears validation errors immediately
+            onSubmit({ email: "demo@papermind.local", password: "biswa@123" });
           }}
         >
           Use Demo Account

@@ -4,6 +4,7 @@ import {
   forgotPassword,
   getProfile,
   login,
+  googleAuthUser,
   logout,
   registerUser,
   resetPassword,
@@ -19,6 +20,7 @@ const router = express.Router();
 router.post("/register", registerUser);
 router.get("/verify/:token", verifyUser);
 router.post("/login", login);
+router.post("/google", googleAuthUser);
 
 router.get("/profile", isLoggedIn, getProfile);
 router.put("/profile", isLoggedIn, updateProfile);
