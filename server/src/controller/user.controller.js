@@ -98,7 +98,7 @@ const registerUser = async (req, res) => {
       success: true,
       emailFailed: !ok,
     });
-  } catch (err) {
+  } catch {
     res.status(400).json({
       message: "Registration failed",
       success: false,
