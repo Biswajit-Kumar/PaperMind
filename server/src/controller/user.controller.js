@@ -28,6 +28,32 @@ const issueSession = (res, user) => {
   return token;
 };
 
+// Shared by registration and manual resend - (re)issues a verification token
+// and emails it. Returns { ok: true } or { ok: false } so callers can decide
+// how to respond without this throwing past them.
+const sendVerificationEmail = async (user) => {
+  const token = crypto.randomBytes(32).toString("hex");
+  user.verificationToken = token;
+  await user.save();
+
+  const verifyUrl = `${
+    process.env.FRONTEND_URL || "http://localhost:5173"
+  }/verify/${token}`;
+
+  try {
+    await sendEmail({
+      to: user.email,
+      subject: "Verify ✔ your email",
+      text: `Please click on the following link: ${verifyUrl}`,
+      html: `<p>Please verify your email by clicking <a href="${verifyUrl}">this link</a>.</p>`,
+    });
+    return { ok: true };
+  } catch (emailErr) {
+    console.error("Verification email send failed:", emailErr);
+    return { ok: false };
+  }
+};
+
 const registerUser = async (req, res) => {
   const { name, email, password } = req.body;
   if (!name || !email || !password) {
@@ -39,8 +65,21 @@ const registerUser = async (req, res) => {
   try {
     const existingUser = await User.findOne({ email });
     if (existingUser) {
-      return res.status(400).json({
-        message: "User already exists",
+      if (existingUser.isVerified) {
+        return res.status(400).json({
+          message: "User already exists",
+        });
+      }
+
+      // Account exists from a previous attempt but was never verified -
+      // most likely because the verification email failed to send. Re-send
+      // instead of dead-ending the user in an unrecoverable "already exists".
+      const { ok } = await sendVerificationEmail(existingUser);
+      return res.status(200).json({
+        message: ok
+          ? "This account already exists but isn't verified yet. We've sent a new verification email."
+          : "This account already exists but isn't verified, and the verification email failed to send again. Please try again shortly.",
+        success: ok,
       });
     }
 
@@ -50,37 +89,18 @@ const registerUser = async (req, res) => {
       password,
     });
 
-    if (!user) {
-      return res.status(400).json({
-        message: "User not registered",
-      });
-    }
-
-    const token = crypto.randomBytes(32).toString("hex");
-    user.verificationToken = token;
-
-    await user.save();
-
-    // send email
-    const verifyUrl = `${
-      process.env.FRONTEND_URL || "http://localhost:5173"
-    }/verify/${token}`;
-
-    await sendEmail({
-      to: user.email,
-      subject: "Verify ✔ your email",
-      text: `Please click on the following link: ${verifyUrl}`,
-      html: `<p>Please verify your email by clicking <a href="${verifyUrl}">this link</a>.</p>`,
-    });
+    const { ok } = await sendVerificationEmail(user);
 
     res.status(200).json({
-      message: "User registered successfully",
+      message: ok
+        ? "User registered successfully"
+        : "Account created, but the verification email could not be sent. Please try registering again to get a new verification email.",
       success: true,
+      emailFailed: !ok,
     });
   } catch (err) {
     res.status(400).json({
-      message: "User not registered",
-      err,
+      message: "Registration failed",
       success: false,
     });
   }
