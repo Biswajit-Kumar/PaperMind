@@ -461,8 +461,8 @@ User Action
 
 2. **Email Service Integration**
 
-   - **Nodemailer**: User verification and password reset
-   - **API Configuration**: Resend HTTP API (free tier, real delivery over HTTPS - not SMTP, since many cloud hosts block outbound SMTP ports)
+   - User verification and password reset
+   - **API Configuration**: Brevo HTTP API (free tier, real delivery over HTTPS - not SMTP, since many cloud hosts block outbound SMTP ports; delivers to any recipient once a single sender email is verified, no custom domain required)
 
 3. **Vector Database Integration**
    - **Qdrant**: High-performance vector similarity search
@@ -712,14 +712,17 @@ JWT_EXPIRY=7d
 GEMINI_API_KEY=your-gemini-api-key-here
 
 # Qdrant Configuration
-QDRANT_HOST=localhost
-QDRANT_PORT=6333
+QDRANT_URL=http://localhost:6333
+# For Qdrant Cloud: https://your-cluster-id.your-region.aws.cloud.qdrant.io
 QDRANT_API_KEY=your-qdrant-api-key-optional
 
-# Email Configuration (Resend HTTP API - avoids cloud hosts that
+# Email Configuration (Brevo HTTP API - avoids cloud hosts that
 # block outbound SMTP ports, e.g. Render's free tier)
-RESEND_API_KEY=your-resend-api-key
-EMAIL_FROM=onboarding@resend.dev
+BREVO_API_KEY=your-brevo-api-key
+EMAIL_FROM=your-verified-sender@example.com
+
+# Google OAuth (Sign in with Google)
+GOOGLE_CLIENT_ID=your-google-oauth-client-id
 
 # Credit System Configuration
 CHARACTERS_PER_TOKEN=4
@@ -737,22 +740,26 @@ VITE_API_URL=http://localhost:3000/api/v1
 # Application Configuration
 VITE_APP_NAME=PaperMind
 VITE_APP_VERSION=1.0.0
+
+# Google OAuth (Sign in with Google)
+VITE_GOOGLE_CLIENT_ID=your-google-oauth-client-id
 ```
 
 ### Environment Variable Descriptions
 
-| Variable               | Description                    | Required | Default   |
-| ---------------------- | ------------------------------ | -------- | --------- |
-| `PORT`                 | Backend server port            | No       | 3000      |
-| `MONGO_URI`            | MongoDB connection string      | Yes      | -         |
-| `JWT_SECRET`           | Secret key for JWT tokens      | Yes      | -         |
-| `GEMINI_API_KEY`       | Gemini API key for AI features | Yes      | -         |
-| `QDRANT_HOST`          | Qdrant vector database host    | No       | localhost |
-| `QDRANT_PORT`          | Qdrant vector database port    | No       | 6333      |
-| `RESEND_API_KEY`       | Resend API key for emails      | Yes      | -         |
-| `EMAIL_FROM`           | Sender address for emails      | Yes      | -         |
-| `CHARACTERS_PER_TOKEN` | Characters per token estimate  | No       | 4         |
-| `TOKENS_PER_CREDIT`    | Tokens per credit conversion   | No       | 1000      |
+| Variable               | Description                       | Required | Default               |
+| ----------------------- | --------------------------------- | -------- | ---------------------- |
+| `PORT`                 | Backend server port               | No       | 3000                  |
+| `MONGO_URI`            | MongoDB connection string         | Yes      | -                     |
+| `JWT_SECRET`           | Secret key for JWT tokens         | Yes      | -                     |
+| `GEMINI_API_KEY`       | Gemini API key for AI features    | Yes      | -                     |
+| `QDRANT_URL`           | Qdrant vector database URL        | No       | http://localhost:6333 |
+| `BREVO_API_KEY`        | Brevo API key for emails          | Yes      | -                     |
+| `EMAIL_FROM`           | Brevo-verified sender address     | Yes      | -                     |
+| `GOOGLE_CLIENT_ID`     | Google OAuth client ID (backend)  | No       | -                     |
+| `VITE_GOOGLE_CLIENT_ID`| Google OAuth client ID (frontend) | No       | -                     |
+| `CHARACTERS_PER_TOKEN` | Characters per token estimate     | No       | 4                     |
+| `TOKENS_PER_CREDIT`    | Tokens per credit conversion      | No       | 1000                  |
 
 ---
 
