@@ -15,4 +15,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Ping backend health endpoint
-        run: curl -sf -m 30 https://papermind-backend-ukbh.onrender.com/api/health
+        # -m 90: a cold start can take 50s+ per Render's own dashboard warning,
+        # so a 30s timeout was failing (and emailing) whenever GitHub's cron
+        # fired late enough for the service to have gone to sleep first.
+        # --retry: absorb one-off network blips instead of hard-failing on them.
+        run: curl -sf -m 90 --retry 2 --retry-delay 5 https://papermind-backend-ukbh.onrender.com/api/health
