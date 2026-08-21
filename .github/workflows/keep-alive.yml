@@ -1,0 +1,18 @@
+name: keep-backend-alive
+
+# Render's free tier sleeps a web service after ~15 minutes of no traffic,
+# and the next request pays a 30-60s wake-up cost. Pinging the health
+# endpoint often enough keeps it warm, at the cost of running "hot"
+# continuously (well within Render's 750 free instance-hours/month for a
+# single service).
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping backend health endpoint
+        run: curl -sf -m 30 https://papermind-backend-ukbh.onrender.com/api/health
