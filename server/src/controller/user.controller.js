@@ -1,7 +1,9 @@
 import "dotenv/config";
+import mongoose from "mongoose";
 import User from "../model/User.model.js";
 import Notebook from "../model/Notebook.model.js";
 import Content from "../model/Content.model.js";
+import ChatMessage from "../model/ChatMessage.model.js";
 import crypto from "crypto";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
@@ -12,6 +14,70 @@ import fs from "fs/promises";
 import path from "path";
 
 const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
+
+// Monthly credit allowance and the rolling window it refills on.
+const MONTHLY_CREDITS = parseInt(process.env.MONTHLY_CREDITS) || 500;
+const CREDIT_RESET_INTERVAL_MS = 30 * 24 * 60 * 60 * 1000;
+
+// Lazy "monthly" credit refill: no cron - every login / profile fetch checks
+// whether it's been 30+ days since the last refill and, if so, tops the user
+// back up. Uses Math.max so a light user who still has credits left is never
+// reset downward. Returns the (possibly updated) user.
+const refillCreditsIfDue = async (user) => {
+  const last = user.creditsResetAt ? user.creditsResetAt.getTime() : 0;
+  if (Date.now() - last >= CREDIT_RESET_INTERVAL_MS) {
+    user.credits = Math.max(user.credits, MONTHLY_CREDITS);
+    user.creditsResetAt = new Date();
+    await user.save();
+  }
+  return user;
+};
+
+// When the current allowance window will next refill.
+const nextCreditReset = (user) =>
+  new Date(
+    (user.creditsResetAt ? user.creditsResetAt.getTime() : Date.now()) +
+      CREDIT_RESET_INTERVAL_MS,
+  );
+
+// Public base URLs. Trailing slash trimmed so `${URL}/path` never doubles up.
+const FRONTEND_URL = (
+  process.env.FRONTEND_URL || "http://localhost:5173"
+).replace(/\/$/, "");
+
+// Where the email verification link points - deliberately the backend (which
+// serves its own confirmation page), so the link never depends on the Vite
+// dev server's port / interface / SPA router.
+//   - locally: hit the backend port directly (no Vite in the path)
+//   - in prod: FRONTEND_URL is a real domain whose /api/* is proxied to this
+//     backend (see client/vercel.json), so route through it - which means a
+//     phone, or any device, gets a working public https link.
+// Override with SERVER_URL if the backend has its own public URL.
+const SERVER_URL = (
+  process.env.SERVER_URL ||
+  (FRONTEND_URL.includes("localhost") ? "http://localhost:3000" : FRONTEND_URL)
+).replace(/\/$/, "");
+
+// Minimal self-contained result page for links clicked from an email, so the
+// browser renders something sensible with zero frontend dependency.
+const resultPage = ({ ok, title, message }) => `<!doctype html>
+<html lang="en"><head><meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>${title} · PaperMind</title>
+<style>
+  body{font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;background:#0f0f10;color:#e7e7e7;display:grid;place-items:center;min-height:100vh;margin:0}
+  .card{max-width:420px;padding:2.5rem 2rem;text-align:center}
+  .icon{font-size:3rem;line-height:1}
+  h1{font-size:1.3rem;margin:.9rem 0 .5rem}
+  p{color:#9a9a9a;line-height:1.55;margin:0 0 1.6rem}
+  a.btn{display:inline-block;background:#f5a623;color:#111;text-decoration:none;font-weight:600;padding:.7rem 1.5rem;border-radius:8px}
+</style></head><body>
+<div class="card">
+  <div class="icon">${ok ? "✅" : "⚠️"}</div>
+  <h1>${title}</h1>
+  <p>${message}</p>
+  <a class="btn" href="${FRONTEND_URL}/login">Go to login</a>
+</div></body></html>`;
 
 // Signs and cookies a JWT for a user the same way normal login does
 const issueSession = (res, user) => {
@@ -36,9 +102,9 @@ const sendVerificationEmail = async (user) => {
   user.verificationToken = token;
   await user.save();
 
-  const verifyUrl = `${
-    process.env.FRONTEND_URL || "http://localhost:5173"
-  }/verify/${token}`;
+  // Points at the backend (always running - it's what sends this email), which
+  // serves its own confirmation page. No dependency on the frontend dev server.
+  const verifyUrl = `${SERVER_URL}/api/v1/users/verify/${token}`;
 
   try {
     await sendEmail({
@@ -108,9 +174,21 @@ const registerUser = async (req, res) => {
 
 const verifyUser = async (req, res) => {
   const { token } = req.params;
+
+  // Clicked from an email -> browser sends Accept: text/html -> render a page.
+  // Called programmatically (old frontend route, tests) -> JSON.
+  const wantsHtml = req.accepts(["json", "html"]) === "html";
+  const respond = (status, { ok, apiMessage, title, message }) =>
+    wantsHtml
+      ? res.status(status).type("html").send(resultPage({ ok, title, message }))
+      : res.status(status).json({ success: ok, message: apiMessage });
+
   if (!token) {
-    return res.status(400).json({
-      message: "Invalid token",
+    return respond(400, {
+      ok: false,
+      apiMessage: "Invalid token",
+      title: "Invalid link",
+      message: "This verification link is missing its token.",
     });
   }
 
@@ -118,8 +196,12 @@ const verifyUser = async (req, res) => {
     const user = await User.findOne({ verificationToken: token });
 
     if (!user) {
-      return res.status(400).json({
-        message: "Invalid token",
+      return respond(400, {
+        ok: false,
+        apiMessage: "Invalid token",
+        title: "Link expired or already used",
+        message:
+          "This verification link is no longer valid. If you already verified, just log in - otherwise register again to get a fresh link.",
       });
     }
 
@@ -127,15 +209,20 @@ const verifyUser = async (req, res) => {
     user.verificationToken = undefined;
     await user.save();
 
-    res.status(200).json({
-      message: "User verified successfully",
-      success: true,
+    return respond(200, {
+      ok: true,
+      apiMessage: "User verified successfully",
+      title: "Email verified",
+      message: "Your email is confirmed. You can now log in to PaperMind.",
     });
   } catch (err) {
-    res.status(400).json({
-      message: "Error verifying user",
-      err,
-      success: false,
+    console.error("Verify error:", err);
+    return respond(400, {
+      ok: false,
+      apiMessage: "Error verifying user",
+      title: "Something went wrong",
+      message:
+        "We couldn't verify your email just now. Please try the link again in a moment.",
     });
   }
 };
@@ -176,6 +263,8 @@ const login = async (req, res) => {
         message: "Please verify your email",
       });
     }
+
+    await refillCreditsIfDue(user);
 
     const token = issueSession(res, user);
 
@@ -241,6 +330,8 @@ const googleAuthUser = async (req, res) => {
       });
     }
 
+    await refillCreditsIfDue(user);
+
     const token = issueSession(res, user);
 
     res.status(200).json({
@@ -272,6 +363,8 @@ const getProfile = async (req, res) => {
         message: "User not found",
       });
     }
+
+    await refillCreditsIfDue(user);
 
     res.status(200).json({
       success: true,
@@ -513,10 +606,9 @@ const forgotPassword = async (req, res) => {
 
     await user.save();
 
-    // Send email
-    const resetUrl = `${
-      process.env.FRONTEND_URL || "http://localhost:5173"
-    }/reset-password/${resetToken}`;
+    // Send email. Reset needs the frontend form (to type a new password), so
+    // this link does point at the frontend - unlike email verification.
+    const resetUrl = `${FRONTEND_URL}/reset-password/${resetToken}`;
 
     await sendEmail({
       to: user.email,
@@ -585,8 +677,11 @@ const resetPassword = async (req, res) => {
 const getUserStats = async (req, res) => {
   try {
     const userId = req.user.id;
+    const uid = new mongoose.Types.ObjectId(userId);
 
-    const user = await User.findById(userId).select("credits dataSourcesCount");
+    const user = await User.findById(userId).select(
+      "credits dataSourcesCount creditsResetAt createdAt",
+    );
 
     if (!user) {
       return res.status(404).json({
@@ -595,12 +690,125 @@ const getUserStats = async (req, res) => {
       });
     }
 
+    await refillCreditsIfDue(user);
+
+    const now = new Date();
+    const startOfToday = new Date(
+      now.getFullYear(),
+      now.getMonth(),
+      now.getDate(),
+    );
+    const startOfThisMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+    const startOfLastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+
+    // creditsDeducted lives on the assistant message of each exchange.
+    const spendSince = (from, to) =>
+      ChatMessage.aggregate([
+        {
+          $match: {
+            userId: uid,
+            role: "assistant",
+            ...(from || to
+              ? { createdAt: { ...(from && { $gte: from }), ...(to && { $lt: to }) } }
+              : {}),
+          },
+        },
+        { $group: { _id: null, credits: { $sum: "$creditsDeducted" } } },
+      ]);
+
+    const [
+      notebookCount,
+      contentAgg,
+      sourceTypeAgg,
+      totalQueries,
+      answeredAgg,
+      todayAgg,
+      thisMonthAgg,
+      lastMonthAgg,
+      lastQuery,
+      lastContent,
+    ] = await Promise.all([
+      Notebook.countDocuments({ userId: uid }),
+      Content.aggregate([
+        { $match: { userId: uid } },
+        {
+          $group: {
+            _id: null,
+            count: { $sum: 1 },
+            tokens: { $sum: "$tokensUsed" },
+          },
+        },
+      ]),
+      Content.aggregate([
+        { $match: { userId: uid } },
+        { $group: { _id: "$sourceType", count: { $sum: 1 } } },
+        { $sort: { count: -1 } },
+        { $limit: 1 },
+      ]),
+      ChatMessage.countDocuments({ userId: uid, role: "user" }),
+      ChatMessage.aggregate([
+        { $match: { userId: uid, role: "assistant" } },
+        {
+          $group: {
+            _id: null,
+            count: { $sum: 1 },
+            credits: { $sum: "$creditsDeducted" },
+            tokens: { $sum: "$tokensUsed.total" },
+          },
+        },
+      ]),
+      spendSince(startOfToday, null),
+      spendSince(startOfThisMonth, null),
+      spendSince(startOfLastMonth, startOfThisMonth),
+      ChatMessage.findOne({ userId: uid, role: "user" })
+        .sort({ createdAt: -1 })
+        .select("createdAt"),
+      Content.findOne({ userId: uid }).sort({ createdAt: -1 }).select("createdAt"),
+    ]);
+
+    const pick = (arr, key) => (arr[0] ? arr[0][key] || 0 : 0);
+
+    const documentsProcessed = pick(contentAgg, "count");
+    const answeredQueries = pick(answeredAgg, "count");
+    const querySpend = pick(answeredAgg, "credits");
+    const totalTokensProcessed =
+      pick(contentAgg, "tokens") + pick(answeredAgg, "tokens");
+
+    const daysSinceSignup = Math.max(
+      1,
+      Math.ceil((now - new Date(user.createdAt)) / (24 * 60 * 60 * 1000)),
+    );
+
     res.status(200).json({
       success: true,
       stats: {
+        // Credits
         credits: user.credits,
+        monthlyCredits: MONTHLY_CREDITS,
+        creditsResetAt: user.creditsResetAt,
+        nextCreditResetAt: nextCreditReset(user),
+        creditsUsedToday: Math.round(pick(todayAgg, "credits") * 100) / 100,
+        creditsThisMonth: Math.round(pick(thisMonthAgg, "credits") * 100) / 100,
+        creditsLastMonth: Math.round(pick(lastMonthAgg, "credits") * 100) / 100,
+        // Sources & notebooks
         dataSourcesCount: user.dataSourcesCount,
         maxDataSources: 20,
+        notebookCount,
+        documentsProcessed,
+        favoriteSourceType: sourceTypeAgg[0] ? sourceTypeAgg[0]._id : null,
+        // Queries
+        totalQueries,
+        averageQueriesPerDay:
+          Math.round((totalQueries / daysSinceSignup) * 10) / 10,
+        averageCreditsPerQuery:
+          answeredQueries > 0
+            ? Math.round((querySpend / answeredQueries) * 100) / 100
+            : 0,
+        totalTokensProcessed,
+        // Activity
+        memberSince: user.createdAt,
+        lastQueryAt: lastQuery ? lastQuery.createdAt : null,
+        lastContentAt: lastContent ? lastContent.createdAt : null,
       },
     });
   } catch (error) {

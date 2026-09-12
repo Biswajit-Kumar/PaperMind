@@ -12,55 +12,41 @@ import {
 import { toast } from "sonner";
 
 import useAuthStore from "@/stores/authStore";
-import useNotebookStore from "@/stores/notebookStore";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 
+const SOURCE_TYPE_LABELS = {
+  file: "PDF / file",
+  text: "Text",
+  url: "Web page",
+  youtube: "YouTube",
+};
+
 export default function StatsPage() {
   const { user, fetchStats } = useAuthStore();
-  const { notebooks, fetchNotebooks } = useNotebookStore();
   const [stats, setStats] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
-  const [detailedStats, setDetailedStats] = useState(null);
 
   useEffect(() => {
     const loadData = async () => {
       setIsLoading(true);
-
       try {
-        // Fetch user stats
         const userStats = await fetchStats();
         setStats(userStats);
-
-        // Fetch notebooks for additional calculations
-        await fetchNotebooks();
-
-        // For DEMO Purpose
-        setDetailedStats({
-          totalQueries: 156,
-          averageQueriesPerDay: 12.3,
-          totalDocumentsProcessed: 42,
-          favoriteSourceType: "PDF",
-          thisMonthCreditsUsed: 67,
-          lastMonthCreditsUsed: 89,
-          creditsUsedToday: 5,
-          averageCreditsPerQuery: 2.3,
-          totalTokensProcessed: 1250000,
-        });
       } catch {
         toast.error("Failed to load statistics");
       } finally {
         setIsLoading(false);
       }
     };
-
     loadData();
-  }, [fetchStats, fetchNotebooks]);
+  }, [fetchStats]);
 
-  const formatDate = (dateString) => {
-    return new Date(dateString).toLocaleDateString("en-US", {
+  const formatDate = (value) => {
+    if (!value) return "—";
+    return new Date(value).toLocaleDateString("en-US", {
       year: "numeric",
       month: "long",
       day: "numeric",
@@ -68,26 +54,19 @@ export default function StatsPage() {
   };
 
   const formatNumber = (num) => {
-    if (num >= 1000000) {
-      return (num / 1000000).toFixed(1) + "M";
-    } else if (num >= 1000) {
-      return (num / 1000).toFixed(1) + "K";
-    }
-    return num?.toString() || "0";
+    if (!num) return "0";
+    if (num >= 1000000) return (num / 1000000).toFixed(1) + "M";
+    if (num >= 1000) return (num / 1000).toFixed(1) + "K";
+    return num.toString();
   };
 
   const getUsageLevel = (current, max) => {
-    const percentage = (current / max) * 100;
+    const percentage = max ? (current / max) * 100 : 0;
     if (percentage < 25) return { color: "text-green-600", level: "Low" };
     if (percentage < 50) return { color: "text-blue-600", level: "Moderate" };
     if (percentage < 75) return { color: "text-yellow-600", level: "High" };
     return { color: "text-red-600", level: "Very High" };
   };
-
-  const creditsUsageLevel = getUsageLevel(
-    (stats?.maxDataSources || 20) - (stats?.dataSourcesCount || 0),
-    stats?.maxDataSources || 20,
-  );
 
   if (isLoading) {
     return (
@@ -106,6 +85,17 @@ export default function StatsPage() {
       </div>
     );
   }
+
+  const s = stats || {};
+  const maxSources = s.maxDataSources || 20;
+  const sourcesUsed = s.dataSourcesCount || 0;
+  const monthlyCredits = s.monthlyCredits || 500;
+  const totalQueries = s.totalQueries || 0;
+  const avgCreditsPerQuery = s.averageCreditsPerQuery || 0;
+  const hasQueryData = totalQueries > 0;
+
+  const sourceUsageLevel = getUsageLevel(sourcesUsed, maxSources);
+  const monthDelta = (s.creditsThisMonth || 0) - (s.creditsLastMonth || 0);
 
   return (
     <div className="container mx-auto px-4 py-8">
@@ -132,13 +122,20 @@ export default function StatsPage() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold text-foreground mb-2">
-              {Math.floor(stats?.credits || 0)}
+              {Math.floor(s.credits || 0)}
             </div>
             <p className="text-xs text-muted-foreground">
-              Used {detailedStats?.creditsUsedToday || 0} today
+              {s.creditsUsedToday > 0
+                ? `Used ${s.creditsUsedToday} today`
+                : "No credits used today"}
             </p>
+            {s.nextCreditResetAt && (
+              <p className="text-xs text-muted-foreground">
+                Refills to {monthlyCredits} on {formatDate(s.nextCreditResetAt)}
+              </p>
+            )}
             <Progress
-              value={((stats?.credits || 0) / 2000) * 100}
+              value={((s.credits || 0) / monthlyCredits) * 100}
               className="mt-3"
             />
           </CardContent>
@@ -154,18 +151,13 @@ export default function StatsPage() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold text-foreground mb-2">
-              {stats?.dataSourcesCount || 0}/{stats?.maxDataSources || 20}
+              {sourcesUsed}/{maxSources}
             </div>
             <p className="text-xs text-muted-foreground">
-              {(stats?.maxDataSources || 20) - (stats?.dataSourcesCount || 0)}{" "}
-              remaining
+              {maxSources - sourcesUsed} remaining
             </p>
             <Progress
-              value={
-                ((stats?.dataSourcesCount || 0) /
-                  (stats?.maxDataSources || 20)) *
-                100
-              }
+              value={(sourcesUsed / maxSources) * 100}
               className="mt-3"
             />
           </CardContent>
@@ -181,7 +173,7 @@ export default function StatsPage() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold text-foreground mb-2">
-              {notebooks.length}
+              {s.notebookCount || 0}
             </div>
             <p className="text-xs text-muted-foreground">
               Total notebooks created
@@ -199,10 +191,10 @@ export default function StatsPage() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold text-foreground mb-2">
-              {detailedStats?.totalQueries || 0}
+              {totalQueries}
             </div>
             <p className="text-xs text-muted-foreground">
-              Avg {detailedStats?.averageQueriesPerDay || 0}/day
+              Avg {s.averageQueriesPerDay || 0}/day
             </p>
           </CardContent>
         </Card>
@@ -218,35 +210,39 @@ export default function StatsPage() {
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-6">
-            {/* Credits Usage */}
+            {/* Credit Usage */}
             <div>
               <div className="flex items-center justify-between mb-2">
                 <span className="text-sm font-medium text-card-foreground">
-                  Credit Usage
+                  Query Credit Usage
                 </span>
                 <span className="text-sm text-muted-foreground">
-                  {detailedStats?.thisMonthCreditsUsed || 0} this month
+                  {s.creditsThisMonth || 0} this month
                 </span>
               </div>
               <div className="space-y-2">
                 <div className="flex items-center justify-between text-xs">
                   <span className="text-muted-foreground">This Month</span>
                   <span className="text-foreground">
-                    {detailedStats?.thisMonthCreditsUsed || 0} credits
+                    {s.creditsThisMonth || 0} credits
                   </span>
                 </div>
                 <Progress
-                  value={
-                    ((detailedStats?.thisMonthCreditsUsed || 0) / 100) * 100
-                  }
+                  value={Math.min(
+                    ((s.creditsThisMonth || 0) / monthlyCredits) * 100,
+                    100,
+                  )}
                 />
                 <div className="flex items-center justify-between text-xs">
                   <span className="text-muted-foreground">Last Month</span>
                   <span className="text-foreground">
-                    {detailedStats?.lastMonthCreditsUsed || 0} credits
+                    {s.creditsLastMonth || 0} credits
                   </span>
                 </div>
               </div>
+              <p className="text-[11px] text-muted-foreground mt-2">
+                Chat queries only; document uploads are not counted here.
+              </p>
             </div>
 
             <Separator />
@@ -257,27 +253,22 @@ export default function StatsPage() {
                 <span className="text-sm font-medium text-card-foreground">
                   Data Sources
                 </span>
-                <Badge variant="outline" className={creditsUsageLevel.color}>
-                  {creditsUsageLevel.level} Usage
+                <Badge variant="outline" className={sourceUsageLevel.color}>
+                  {sourceUsageLevel.level} Usage
                 </Badge>
               </div>
               <Progress
-                value={
-                  ((stats?.dataSourcesCount || 0) /
-                    (stats?.maxDataSources || 20)) *
-                  100
-                }
+                value={(sourcesUsed / maxSources) * 100}
                 className="mb-2"
               />
               <p className="text-xs text-muted-foreground">
-                {stats?.dataSourcesCount || 0} of {stats?.maxDataSources || 20}{" "}
-                sources used
+                {sourcesUsed} of {maxSources} sources used
               </p>
             </div>
 
             <Separator />
 
-            {/* Average Performance */}
+            {/* Performance */}
             <div>
               <div className="flex items-center justify-between mb-2">
                 <span className="text-sm font-medium text-card-foreground">
@@ -287,15 +278,15 @@ export default function StatsPage() {
               <div className="grid grid-cols-2 gap-4 text-center">
                 <div className="p-3 bg-secondary/50 rounded-lg">
                   <div className="text-lg font-bold text-foreground">
-                    {detailedStats?.averageCreditsPerQuery || 0}
+                    {hasQueryData ? avgCreditsPerQuery : "—"}
                   </div>
                   <div className="text-xs text-muted-foreground">
-                    Credits/Query
+                    Credits / Query
                   </div>
                 </div>
                 <div className="p-3 bg-secondary/50 rounded-lg">
                   <div className="text-lg font-bold text-foreground">
-                    {formatNumber(detailedStats?.totalTokensProcessed || 0)}
+                    {formatNumber(s.totalTokensProcessed || 0)}
                   </div>
                   <div className="text-xs text-muted-foreground">
                     Tokens Processed
@@ -326,7 +317,7 @@ export default function StatsPage() {
                     Member Since
                   </span>
                   <span className="text-sm font-medium text-foreground">
-                    {user?.createdAt ? formatDate(user.createdAt) : "Unknown"}
+                    {formatDate(s.memberSince || user?.createdAt)}
                   </span>
                 </div>
                 <div className="flex items-center justify-between">
@@ -365,26 +356,26 @@ export default function StatsPage() {
               <div className="space-y-3">
                 <div className="flex items-center justify-between">
                   <span className="text-sm text-muted-foreground">
-                    Total Documents
+                    Documents Processed
                   </span>
                   <span className="text-sm font-medium text-foreground">
-                    {detailedStats?.totalDocumentsProcessed || 0}
+                    {s.documentsProcessed || 0}
                   </span>
                 </div>
                 <div className="flex items-center justify-between">
                   <span className="text-sm text-muted-foreground">
-                    Favorite Source Type
+                    Most Used Source Type
                   </span>
                   <span className="text-sm font-medium text-foreground">
-                    {detailedStats?.favoriteSourceType || "N/A"}
+                    {SOURCE_TYPE_LABELS[s.favoriteSourceType] || "—"}
                   </span>
                 </div>
                 <div className="flex items-center justify-between">
                   <span className="text-sm text-muted-foreground">
-                    Avg. Queries/Day
+                    Avg. Queries / Day
                   </span>
                   <span className="text-sm font-medium text-foreground">
-                    {detailedStats?.averageQueriesPerDay || 0}
+                    {s.averageQueriesPerDay || 0}
                   </span>
                 </div>
               </div>
@@ -402,10 +393,10 @@ export default function StatsPage() {
                   <div className="w-2 h-2 bg-green-500 rounded-full"></div>
                   <div className="flex-1">
                     <p className="text-xs font-medium text-foreground">
-                      Last Login
+                      This Session
                     </p>
                     <p className="text-xs text-muted-foreground">
-                      {formatDate(new Date())} (Current Session)
+                      {formatDate(new Date())}
                     </p>
                   </div>
                 </div>
@@ -416,9 +407,9 @@ export default function StatsPage() {
                       Last Query
                     </p>
                     <p className="text-xs text-muted-foreground">
-                      {detailedStats?.creditsUsedToday > 0
-                        ? "Today"
-                        : "No queries today"}
+                      {s.lastQueryAt
+                        ? formatDate(s.lastQueryAt)
+                        : "No queries yet"}
                     </p>
                   </div>
                 </div>
@@ -426,11 +417,11 @@ export default function StatsPage() {
                   <div className="w-2 h-2 bg-purple-500 rounded-full"></div>
                   <div className="flex-1">
                     <p className="text-xs font-medium text-foreground">
-                      Content Added
+                      Last Source Added
                     </p>
                     <p className="text-xs text-muted-foreground">
-                      {stats?.dataSourcesCount > 0
-                        ? `${stats.dataSourcesCount} sources`
+                      {s.lastContentAt
+                        ? formatDate(s.lastContentAt)
                         : "No content yet"}
                     </p>
                   </div>
@@ -455,55 +446,56 @@ export default function StatsPage() {
               {/* Credit Efficiency */}
               <div className="text-center p-4 border border-border rounded-lg">
                 <div className="text-2xl font-bold text-primary mb-1">
-                  {detailedStats?.averageCreditsPerQuery || 0}
+                  {hasQueryData ? avgCreditsPerQuery : "—"}
                 </div>
                 <div className="text-sm text-muted-foreground mb-2">
                   Avg Credits per Query
                 </div>
                 <div className="text-xs text-muted-foreground">
-                  Efficiency Score:{" "}
-                  {detailedStats?.averageCreditsPerQuery <= 2
-                    ? "Excellent"
-                    : detailedStats?.averageCreditsPerQuery <= 3
-                      ? "Good"
-                      : "Fair"}
+                  {!hasQueryData
+                    ? "No queries yet"
+                    : avgCreditsPerQuery <= 2
+                      ? "Efficiency: Excellent"
+                      : avgCreditsPerQuery <= 3
+                        ? "Efficiency: Good"
+                        : "Efficiency: Fair"}
                 </div>
               </div>
 
               {/* Token Processing */}
               <div className="text-center p-4 border border-border rounded-lg">
                 <div className="text-2xl font-bold text-green-600 dark:text-green-400 mb-1">
-                  {formatNumber(detailedStats?.totalTokensProcessed || 0)}
+                  {formatNumber(s.totalTokensProcessed || 0)}
                 </div>
                 <div className="text-sm text-muted-foreground mb-2">
                   Total Tokens Processed
                 </div>
                 <div className="text-xs text-muted-foreground">
-                  Processing Power Used
+                  Embeddings + chat
                 </div>
               </div>
 
               {/* Monthly Usage */}
               <div className="text-center p-4 border border-border rounded-lg">
                 <div className="text-2xl font-bold text-blue-600 dark:text-blue-400 mb-1">
-                  {detailedStats?.thisMonthCreditsUsed || 0}
+                  {s.creditsThisMonth || 0}
                 </div>
                 <div className="text-sm text-muted-foreground mb-2">
-                  Credits This Month
+                  Query Credits This Month
                 </div>
                 <div className="text-xs text-muted-foreground">
-                  {detailedStats?.thisMonthCreditsUsed >
-                  detailedStats?.lastMonthCreditsUsed
-                    ? "↑"
-                    : "↓"}{" "}
-                  vs Last Month
+                  {monthDelta === 0
+                    ? "Same as last month"
+                    : monthDelta > 0
+                      ? `↑ ${monthDelta} vs last month`
+                      : `↓ ${Math.abs(monthDelta)} vs last month`}
                 </div>
               </div>
 
               {/* Document Processing */}
               <div className="text-center p-4 border border-border rounded-lg">
                 <div className="text-2xl font-bold text-purple-600 dark:text-purple-400 mb-1">
-                  {detailedStats?.totalDocumentsProcessed || 0}
+                  {s.documentsProcessed || 0}
                 </div>
                 <div className="text-sm text-muted-foreground mb-2">
                   Documents Processed
@@ -525,16 +517,14 @@ export default function StatsPage() {
                   <p className="text-muted-foreground">
                     • You have{" "}
                     <strong className="text-foreground">
-                      {Math.floor(stats?.credits || 0)} credits
+                      {Math.floor(s.credits || 0)} credits
                     </strong>{" "}
                     remaining
                   </p>
                   <p className="text-muted-foreground">
                     • You can add{" "}
                     <strong className="text-foreground">
-                      {(stats?.maxDataSources || 20) -
-                        (stats?.dataSourcesCount || 0)}{" "}
-                      more
+                      {maxSources - sourcesUsed} more
                     </strong>{" "}
                     data sources
                   </p>
@@ -543,13 +533,13 @@ export default function StatsPage() {
                   <p className="text-muted-foreground">
                     • Your avg query uses{" "}
                     <strong className="text-foreground">
-                      {detailedStats?.averageCreditsPerQuery || 0} credits
+                      {hasQueryData ? `${avgCreditsPerQuery} credits` : "n/a yet"}
                     </strong>
                   </p>
                   <p className="text-muted-foreground">
                     • Most used source type:{" "}
                     <strong className="text-foreground">
-                      {detailedStats?.favoriteSourceType || "None yet"}
+                      {SOURCE_TYPE_LABELS[s.favoriteSourceType] || "none yet"}
                     </strong>
                   </p>
                 </div>
@@ -574,9 +564,11 @@ export default function StatsPage() {
                   Credit Optimization
                 </h5>
                 <p className="text-sm text-blue-700 dark:text-blue-300">
-                  {detailedStats?.averageCreditsPerQuery > 3
-                    ? "Try asking more specific questions to reduce credit usage per query."
-                    : "Great job! Your queries are credit-efficient."}
+                  {!hasQueryData
+                    ? "Ask your first question to see how efficiently your queries use credits."
+                    : avgCreditsPerQuery > 3
+                      ? "Try asking more specific questions to reduce credit usage per query."
+                      : "Your queries are credit-efficient."}
                 </p>
               </div>
 
@@ -585,9 +577,11 @@ export default function StatsPage() {
                   Content Management
                 </h5>
                 <p className="text-sm text-green-700 dark:text-green-300">
-                  {(stats?.dataSourcesCount || 0) < 10
-                    ? "You can add more documents to build a richer knowledge base."
-                    : "Your knowledge base is well-stocked! Focus on quality queries."}
+                  {sourcesUsed === 0
+                    ? "Upload a document or add a URL to build your first knowledge base."
+                    : sourcesUsed < 10
+                      ? "You can add more documents to build a richer knowledge base."
+                      : "Your knowledge base is well-stocked! Focus on quality queries."}
                 </p>
               </div>
 
@@ -596,7 +590,7 @@ export default function StatsPage() {
                   Usage Patterns
                 </h5>
                 <p className="text-sm text-purple-700 dark:text-purple-300">
-                  {detailedStats?.averageQueriesPerDay > 10
+                  {s.averageQueriesPerDay > 10
                     ? "You're an active user! Consider organizing content into more notebooks."
                     : "Try exploring more queries to get the most out of your content."}
                 </p>
@@ -607,7 +601,7 @@ export default function StatsPage() {
                   Feature Discovery
                 </h5>
                 <p className="text-sm text-orange-700 dark:text-orange-300">
-                  {notebooks.length < 3
+                  {(s.notebookCount || 0) < 3
                     ? "Create separate notebooks for different topics to stay organized."
                     : "Excellent organization! Use the chat feature to get detailed answers."}
                 </p>

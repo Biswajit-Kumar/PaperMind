@@ -53,7 +53,14 @@ const userSchema = new mongoose.Schema(
     },
     credits: {
       type: Number,
-      default: 300,
+      default: 500,
+    },
+    // When the monthly credit allowance was last refilled. Checked lazily on
+    // login / profile fetch (see refillCreditsIfDue) rather than by a cron -
+    // a rolling 30-day window from this timestamp, not a calendar month.
+    creditsResetAt: {
+      type: Date,
+      default: Date.now,
     },
     dataSourcesCount: {
       type: Number,
