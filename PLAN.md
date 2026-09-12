@@ -1,0 +1,231 @@
+# PaperMind — completion plan
+
+Four workstreams. 1 and 2 are credibility fixes (small, do first). 3 is the
+recruiter headline. 4 hardens it and produces a second set of numbers.
+
+Status legend: ☐ not started · ◐ in progress · ☑ done
+
+---
+
+## Workstream 1 — Credit system: lazy monthly reset  ☑
+
+**Goal:** no more permanent dead-end when credits hit zero; keep abuse
+protection on the live deploy; gain a "quota system" talking point.
+
+| File | Change | Status |
+|---|---|---|
+| `server/src/model/User.model.js` | `credits` default `300 → 500`; add `creditsResetAt: { type: Date, default: Date.now }` | ☐ |
+| `server/src/controller/user.controller.js` | Helper `refillCreditsIfDue(user)` — if `now - creditsResetAt >= 30d`: `credits = Math.max(credits, 500)`, `creditsResetAt = now`, save. Call in `login`, `googleAuthUser`, `getProfile`. | ☐ |
+| `server/src/controller/user.controller.js` → `getUserStats` | Also return `creditsResetAt` and computed `nextResetAt` | ☐ |
+| `client/src/pages/StatsPage.jsx` | Show "Credits reset on {date}" | ☐ |
+
+**Notes:** `Math.max(credits, 500)` — never reset a light user *downward*.
+Rolling 30-day window from last refill, not calendar month — no cron, no
+month-boundary edge cases.
+
+**Effort:** ~1 hr.
+
+---
+
+## Workstream 2 — Remove the fake dashboard stats  ☑
+
+**Problem:** `client/src/pages/StatsPage.jsx` (~line 40, `// For DEMO Purpose`)
+hardcodes `totalQueries: 156`, `1.3M tokens`, `42 documents`,
+`89 credits last month`, `12.3/day`. A recruiter on a fresh account sees
+fabricated activity — worse than no stats page.
+
+**Fix — wire to real data** (already persisted in `ChatMessage` + `Content`):
+
+| Stat | Real source |
+|---|---|
+| Total queries | `ChatMessage.countDocuments({ userId, role: "user" })` |
+| Total tokens processed | `$sum` `ChatMessage.tokensUsed.total` + `$sum` `Content.tokensUsed` |
+| Documents processed | `Content.countDocuments({ userId, status: "completed" })` |
+| Favorite source type | `Content` aggregate: group by `sourceType`, sort desc, first |
+| Avg credits / query | mean of `ChatMessage.creditsDeducted` |
+| Avg queries / day | totalQueries ÷ days since `user.createdAt` |
+| This / last month credits | `ChatMessage` aggregate on `createdAt`, `$sum creditsDeducted` by month (label "query credits" — upload credits aren't per-event logged) |
+
+- Backend: extend `getUserStats` or add `GET /api/users/stats/detailed`.
+- Frontend: delete the `detailedStats` mock, consume the endpoint. Any card
+  that can't be honestly backed → remove it, don't fake it.
+
+**Effort:** 3–4 hrs.
+
+---
+
+## Workstream 3 — Evaluation harness (headline)  ☐
+
+### 3a. Dataset — `server/eval/dataset.jsonl`
+
+**Corpus:** 5 classic ML papers (arXiv, clean text extraction):
+
+| Paper | arXiv |
+|---|---|
+| Attention Is All You Need | 1706.03762 |
+| BERT | 1810.04805 |
+| Retrieval-Augmented Generation for Knowledge-Intensive NLP | 2005.11401 |
+| LoRA: Low-Rank Adaptation of LLMs | 2106.09685 |
+| Dense Passage Retrieval for Open-Domain QA | 2004.04906 |
+
+**~50 questions, ~10 per paper.** Schema:
+
+```json
+{
+  "id": "q007",
+  "question": "What sub-layer does the Transformer add around each attention and feed-forward block?",
+  "answer": "A residual connection followed by layer normalization.",
+  "doc": "attention-is-all-you-need",
+  "gold_quote": "We employ a residual connection around each of the two sub-layers, followed by layer normalization.",
+  "page": 3,
+  "type": "factual"
+}
+```
+
+**Type mix:** ~50% `factual`, ~25% `multihop` (multiple `gold_quote`s),
+~25% `paraphrase` (no vocabulary overlap with the passage — where semantic
+retrieval earns its number).
+
+**Build process (state in README):** Gemini drafts 3–4 candidate Q&A per
+chunk → **human-verify and edit every one**. The manual pass is what makes it
+credible.
+
+**Effort:** 4–6 hrs.
+
+### 3b. Harness — `server/eval/`
+
+```
+server/eval/
+  datasets/papers/*.txt        # extracted paper text
+  dataset.jsonl                # the 50 Q&A
+  adversarial.jsonl            # Workstream 4
+  strategies.js                # chunking strategy implementations
+  index.js                     # build in-memory vector index for a strategy
+  metrics.js                   # hit@k, MRR, recall@k, (optional) judge
+  rerank.js                    # Gemini listwise re-ranker
+  guardrails.js                # Workstream 4
+  run.js                       # CLI entrypoint
+  results/
+    embeddings.cache.json      # hash(text) -> vector; reruns free/offline
+    <timestamp>.json           # raw run output
+    summary.md                 # generated comparison table
+```
+
+**Design choices:**
+- **In-memory brute-force cosine**, not Qdrant — 5 papers ≈ 1000 chunks,
+  trivial to score exhaustively; keeps eval off real user data / running infra.
+  `npm run eval` just works.
+- **Disk-cached embeddings** keyed by text hash — embed once (on hotspot),
+  iterate metrics offline forever. Sidesteps the proxy problem.
+- Same embedding model as prod (`gemini-embedding-001`).
+
+**Chunking strategies compared:**
+1. `fixed-256-0` — fixed 256 tokens, no overlap
+2. `fixed-256-50` — fixed 256 tokens, 50 overlap
+3. `recursive-300-50` — current prod approach
+4. `semantic` — embed sentence-windows, cut where consecutive-window cosine
+   similarity drops below the Nth percentile
+5. `recursive-300-50 + rerank` — retrieve top-20 by vector sim, Gemini reorders to top-5
+
+**Metrics:**
+- `hit@k`, k ∈ {1,3,5,10} — relevant chunk in top k? Relevant =
+  token-overlap(chunk, gold_quote) ≥ 0.6, or (same doc AND page).
+- `MRR@10` — mean of 1/(rank of first relevant chunk).
+- `recall@k` — multi-hop: fraction of gold chunks retrieved.
+- *Optional* `answer_correctness` — Gemini-as-judge (1–5), with the LLM-judge caveat noted.
+
+**Re-ranker:** Gemini listwise (`rerank.js`) — prompt with 20 candidates, get
+a reordering. No new dependency. Note in README that a real cross-encoder
+(`bge-reranker`) is the "proper" choice but needs a heavy ONNX download the
+network makes painful.
+
+### 3c. README section
+
+```markdown
+## Retrieval evaluation
+
+Across 50 human-verified questions over 5 ML papers:
+
+| Chunking strategy            | Hit@3 | Hit@5 | MRR@10 |
+|------------------------------|:-----:|:-----:|:------:|
+| Fixed 256-token, no overlap  |  XX%  |  XX%  |  0.XX  |
+| Fixed 256-token, 50 overlap  |  XX%  |  XX%  |  0.XX  |
+| Recursive split (current)    |  XX%  |  XX%  |  0.XX  |
+| Semantic chunking            |  XX%  |  XX%  |  0.XX  |
+| + Gemini re-ranker           |  XX%  |  XX%  |  0.XX  |
+
+Semantic chunking raised hit-rate@5 from XX% to XX%; the re-ranker added a
+further X points. Harness + dataset in `server/eval/`, `npm run eval`.
+
+**Caveats:** 50 questions, single domain — a smoke-test eval, not a benchmark.
+Questions are LLM-drafted and human-verified, biasing toward answerable
+lookups. The re-ranker adds ~Xs latency and one extra LLM call per query.
+```
+
+**Effort:** harness 6–8 hrs · semantic chunking 2–3 hrs · re-ranker 2 hrs ·
+run + writeup 2–3 hrs.
+
+---
+
+## Workstream 4 — Guardrails  ☐
+
+Three layers. Fold the free parts into Workstream 3; the rest is its own pass.
+
+### Layer 1 — Ingestion: indirect prompt injection
+
+A user uploads a PDF containing `"IGNORE ALL PREVIOUS INSTRUCTIONS..."`; it
+gets chunked, retrieved, and injected as "context".
+
+- **Structural (nearly free, always on):** wrap retrieved chunks in explicit
+  delimiters in `chat.service.js`; instruct the model that text between
+  `<source>` tags is DATA, never instructions.
+- **Ingestion scan (~2 hrs):** on document processing, flag chunks matching
+  injection patterns (`ignore (previous|all) instructions`, `you are now`,
+  `system:`, `disregard the above`, AI-directed imperatives). Quarantine or
+  strip, log the hit.
+- *Optional:* Gemini classifier pass on suspicious chunks.
+
+### Layer 2 — Input: query screening
+
+- Heuristic + optional light LLM check: jailbreak / injection / off-topic-abuse
+  → reject before spending a Gemini call.
+- **Per-user rate limiting** — also strengthens the credit/abuse story.
+- Hard max query length.
+
+### Layer 3 — Output: groundedness + safety
+
+- **Groundedness check** — claim-heavy answer with zero `[n]` citation markers
+  → downgrade to "I'm not confident this is in your documents." Stronger:
+  cheap second LLM/NLI call, "is every sentence supported by the context?"
+- **Configure Gemini `safetySettings` explicitly** in `chat.service.js`.
+- ~~DIY PII scrubbing on output~~ — skip; noisy, Gemini covers most.
+
+### Eval integration (the payoff)
+
+`server/eval/adversarial.jsonl` — 25–30 attack cases (query injections,
+poisoned test doc, jailbreaks, off-topic). New metric: **attack-success rate**.
+
+README line: *"Blocks 27/30 known prompt-injection and jailbreak attempts;
+structured-context prompting stopped all 12 indirect-injection payloads
+embedded in uploaded documents."*
+
+**Effort:** free parts ~1 hr · ingestion scan + input screening + rate
+limiting + adversarial set ~1.5 days.
+
+---
+
+## Execution order
+
+1. ☑ Credit reset — removes the dead-end
+2. ☑ Stats cleanup — removes the credibility landmine (all `/stats` numbers now real)
+3. ☐ Guardrails free parts: delimiter prompting, `safetySettings`, groundedness-from-citations (~1 hr)
+4. ☐ Eval scaffold: in-memory index + metrics + embedding cache (½ day)
+5. ☐ Dataset — manual, in parallel with 4 (¾ day)
+6. ☐ Run baselines → first real numbers
+7. ☐ Semantic chunking → rerun
+8. ☐ Re-ranker → rerun
+9. ☐ Guardrails Workstream 4 proper + adversarial eval set (~1.5 days)
+10. ☐ README tables + interpretation
+
+**Total ≈ 30–35 hrs.** Commit each step separately — real extension work,
+helps the thin contribution graph.
