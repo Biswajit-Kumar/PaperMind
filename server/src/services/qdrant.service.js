@@ -1,25 +1,43 @@
 import { QdrantVectorStore } from "@langchain/qdrant";
+import { QdrantClient } from "@qdrant/js-client-rest";
 import { embeddings } from "./embeddings.service.js";
 
-const qdrantConfig = {
-  url:
-    process.env.QDRANT_URL ||
-    `http://${process.env.QDRANT_HOST || "localhost"}:${
-      process.env.QDRANT_PORT || 6333
-    }`,
-  apiKey: process.env.QDRANT_API_KEY || undefined,
-};
+const qdrantUrl =
+  process.env.QDRANT_URL ||
+  `http://${process.env.QDRANT_HOST || "localhost"}:${
+    process.env.QDRANT_PORT || 6333
+  }`;
 
-const addDocuments = async (contentId, textChunks, metadata = {}) => {
+// Shared client with checkCompatibility disabled - the bundled qdrant-js
+// (1.15) is a minor version behind the Docker image (1.18) and logs a scary
+// "incompatible" warning on every call, though every operation we use works
+// fine across that gap.
+const qdrantClient = new QdrantClient({
+  url: qdrantUrl,
+  apiKey: process.env.QDRANT_API_KEY || undefined,
+  checkCompatibility: false,
+});
+
+const qdrantConfig = { client: qdrantClient };
+
+// How many chunks to retrieve, and the minimum cosine similarity a chunk must
+// clear to be handed to the LLM. The threshold stops an off-topic document
+// from injecting its "least bad" chunks into the context just because it was
+// selected. Tune RAG_MIN_SCORE per embedding model if recall feels low.
+const TOP_K = parseInt(process.env.RAG_TOP_K) || 5;
+const MIN_SCORE = parseFloat(process.env.RAG_MIN_SCORE || "0.3");
+
+const addDocuments = async (contentId, chunks, metadata = {}) => {
   try {
     const collectionName = `content_${contentId}`;
 
-    // Create documents with metadata
-    const documents = textChunks.map((text, index) => ({
-      pageContent: text,
+    // chunks: [{ content, page, chunkIndex }] from the document processor.
+    const documents = chunks.map((chunk, index) => ({
+      pageContent: chunk.content,
       metadata: {
         contentId,
-        chunkIndex: index,
+        chunkIndex: chunk.chunkIndex ?? index,
+        page: chunk.page ?? null,
         ...metadata,
       },
     }));
@@ -36,7 +54,7 @@ const addDocuments = async (contentId, textChunks, metadata = {}) => {
 
     return {
       collectionName,
-      chunkCount: textChunks.length,
+      chunkCount: chunks.length,
       vectorStore,
     };
   } catch (error) {
@@ -44,38 +62,41 @@ const addDocuments = async (contentId, textChunks, metadata = {}) => {
   }
 };
 
-// Search similar documents
-const searchSimilar = async (contentId, query, limit = 5) => {
+// Search one content collection. Returns scored chunks already filtered by
+// MIN_SCORE.
+const searchSimilar = async (contentId, query, limit = TOP_K) => {
   try {
     const collectionName = `content_${contentId}`;
 
-    // Connect to existing vector store
     const vectorStore = new QdrantVectorStore(embeddings, {
       ...qdrantConfig,
       collectionName,
     });
 
-    // Search for similar documents
     const results = await vectorStore.similaritySearchWithScore(query, limit);
 
-    return results.map(([doc, score]) => ({
-      content: doc.pageContent,
-      score: score,
-      metadata: doc.metadata,
-    }));
+    return results
+      .map(([doc, score]) => ({
+        content: doc.pageContent,
+        score,
+        metadata: doc.metadata,
+      }))
+      .filter((r) => r.score >= MIN_SCORE);
   } catch (error) {
     throw new Error(`Error searching documents: ${error.message}`);
   }
 };
 
-// Search across multiple collections (for multiple content sources)
-const searchMultipleSources = async (contentIds, query, limit = 10) => {
+// Search across multiple content collections (multi-source selection), merge,
+// keep only the globally top-K chunks that clear the score threshold.
+const searchMultipleSources = async (contentIds, query, limit = TOP_K) => {
   try {
     const allResults = [];
 
-    // Search each content collection
     for (const contentId of contentIds) {
       try {
+        // Over-fetch per source, then trim globally, so one strong source can
+        // still supply most of the context.
         const results = await searchSimilar(contentId, query, limit);
         allResults.push(...results);
       } catch (error) {
@@ -83,10 +104,9 @@ const searchMultipleSources = async (contentIds, query, limit = 10) => {
       }
     }
 
-    // Sort by score (higher is better for cosine similarity)
+    // Higher cosine similarity = better match
     allResults.sort((a, b) => b.score - a.score);
 
-    // Return top results
     return allResults.slice(0, limit);
   } catch (error) {
     throw new Error(`Error searching multiple sources: ${error.message}`);
@@ -96,23 +116,7 @@ const searchMultipleSources = async (contentIds, query, limit = 10) => {
 // Delete collection
 const deleteCollection = async (contentId) => {
   try {
-    const collectionName = `content_${contentId}`;
-
-    const response = await fetch(
-      `${qdrantConfig.url}/collections/${collectionName}`,
-      {
-        method: "DELETE",
-        headers: {
-          "Content-Type": "application/json",
-          ...(qdrantConfig.apiKey && { "api-key": qdrantConfig.apiKey }),
-        },
-      }
-    );
-
-    if (!response.ok) {
-      throw new Error(`Failed to delete collection: ${response.statusText}`);
-    }
-
+    await qdrantClient.deleteCollection(`content_${contentId}`);
     return true;
   } catch (error) {
     console.log(`Error deleting collection: ${error.message}`);

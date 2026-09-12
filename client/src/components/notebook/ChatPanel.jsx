@@ -145,10 +145,13 @@ export default function ChatPanel({ notebookId }) {
                               className="flex items-center gap-2 text-xs"
                             >
                               <Badge variant="outline" className="text-xs">
-                                {citation.sourceType}
+                                {citation.marker
+                                  ? `[${citation.marker}]`
+                                  : citation.sourceType}
                               </Badge>
                               <span className="text-muted-foreground truncate flex-1">
                                 {citation.title}
+                                {citation.page ? `, p. ${citation.page}` : ""}
                               </span>
                               <span className="text-muted-foreground">
                                 {Math.round(citation.relevanceScore * 100)}%

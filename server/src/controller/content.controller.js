@@ -1,7 +1,7 @@
 import Content from "../model/Content.model.js";
 import User from "../model/User.model.js";
 import Notebook from "../model/Notebook.model.js";
-import { processDocument } from "../services/document.processor.service.js";
+import { loadDocument } from "../services/document.processor.service.js";
 import {
   processAndEmbed,
   estimateTokens,
@@ -62,8 +62,12 @@ const uploadFile = async (req, res) => {
     let content = null;
 
     try {
-      // First process the document to get text
-      const extractedText = await processDocument(filePath, mimeType);
+      // Load the document into page-aware segments (one per PDF page); keep
+      // the flat text too for credit estimation and storage.
+      const { text: extractedText, segments } = await loadDocument(
+        filePath,
+        mimeType,
+      );
 
       // Estimate tokens and check credits
       const tokensNeeded = estimateTokens(extractedText);
@@ -95,16 +99,12 @@ const uploadFile = async (req, res) => {
         status: "processing",
       });
 
-      // Process and create embeddings
-      const embeddingResult = await processAndEmbed(
-        content._id,
-        extractedText,
-        {
-          title: content.title,
-          sourceType: "file",
-          filename: originalName,
-        },
-      );
+      // Process and create embeddings (segments carry page numbers)
+      const embeddingResult = await processAndEmbed(content._id, segments, {
+        title: content.title,
+        sourceType: "file",
+        filename: originalName,
+      });
 
       // Update content with results
       await Content.findByIdAndUpdate(content._id, {
