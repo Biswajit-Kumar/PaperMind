@@ -62,21 +62,28 @@ embedding quota affordable), 30 questions (10/paper) instead of 50. Harness,
 dataset, and metrics are real and running; see `server/eval/results/summary.md`
 for the current numbers.
 
-**Real (not simulated) result so far — 3 of 4 base strategies, on 30
-questions pooled across all 3 papers:**
+**Real (not simulated) result so far — 3 of 4 base strategies + the
+re-ranker, on 30 questions pooled across all 3 papers:**
 
 | Chunking strategy | Hit@1 | Hit@3 | Hit@5 | Hit@10 | MRR@10 |
 |---|---|---|---|---|---|
 | Fixed 300-token, no overlap | 73% | 83% | 90% | 93% | 0.80 |
 | Fixed 300-token, 50-token overlap | 70% | 93% | 93% | 97% | 0.81 |
 | Recursive split (production) | 67% | 83% | 83% | 93% | 0.76 |
+| Recursive split + Gemini re-rank | 67% | 90% | 93% | 97% | 0.78 |
 
-Semantic chunking and the Gemini re-ranker rows are blocked, not broken:
-`gemini-embedding-001` and `gemini-flash-latest` both hit their free-tier
-**daily** request quotas (confirmed via direct API probing, not a guess) mid-run.
-Re-run `npm run eval` once the quota resets (both models' request counters
-reset daily) to fill in the remaining two rows — the disk cache means the
-3 completed strategies cost zero new API calls on the next run.
+Re-ranker row is genuinely reranked (27/30 questions actually got a Gemini
+reordering, not a vector-order fallback) after switching the reranker to
+`gemini-flash-lite-latest` (see Workstream 4) — a real, modest lift over
+plain recursive (Hit@3 83%→90%, Hit@5 83%→93%).
+
+Semantic chunking row is still blocked, not broken: `gemini-embedding-001`
+hit its free-tier **daily** request quota again on the next day's re-run,
+meaning Google's reset boundary doesn't align with local midnight and
+hasn't rolled over yet as of this run. Re-run `npm run eval` later to fill
+in the last row — the disk cache means the 3 completed strategies + the
+reranker cost zero new API calls on the next run, only semantic needs to
+succeed.
 
 **Interesting honest finding, not the hoped-for one:** production's own
 `recursive` splitter scores *lower* than the naive fixed-window baselines on
@@ -268,8 +275,8 @@ limiting + adversarial set ~1.5 days.
 4. ☑ Eval scaffold: in-memory index + metrics + embedding cache
 5. ☑ Dataset — 30 questions, 3 papers, human-verified against extracted page text
 6. ☑ Run baselines → first real numbers (3/4 base strategies; see Workstream 3)
-7. ☐ Semantic chunking → rerun (blocked on daily embedding quota reset)
-8. ☐ Re-ranker → rerun (blocked on daily quota reset; model switched to avoid re-hitting the 20/day wall)
+7. ☐ Semantic chunking → rerun (still blocked on daily embedding quota reset)
+8. ☑ Re-ranker → real result in (27/30 genuinely reranked, after switching to `gemini-flash-lite-latest`)
 9. ☐ Guardrails Workstream 4 proper + adversarial eval set (~1.5 days)
 10. ☐ README tables + interpretation (once semantic/rerank fill in)
 
