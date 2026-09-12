@@ -23,6 +23,7 @@ _Transform your documents into an intelligent, searchable knowledge base powered
 - [Features](#features)
 - [Architecture](#architecture)
 - [Technology Stack](#technology-stack)
+- [Evaluation & Guardrails](#evaluation--guardrails)
 - [Prerequisites](#prerequisites)
 - [Installation](#installation)
 - [Environment Variables](#environment-variables)
@@ -41,7 +42,7 @@ PaperMind is a powerful AI-powered document analysis and chat platform that tran
 ### Key Capabilities
 
 - **Multi-Source Data Ingestion**: Support for PDFs, websites, YouTube videos, and text input
-- **Advanced AI Processing**: Powered by Google's Gemini models (`gemini-flash-latest` for chat, `gemini-embedding-001` for embeddings)
+- **Advanced AI Processing**: Powered by Google's Gemini models (`gemini-flash-lite-latest` for chat, `gemini-embedding-001` for embeddings)
 - **Semantic Search**: Vector-based similarity search using Qdrant vector database
 - **Intelligent Chat Interface**: Natural language queries with source citations
 - **Organized Workspace**: Notebook-based organization system
@@ -340,7 +341,7 @@ User Query
                                 ▼                       ▼
                        ┌─────────────────┐    ┌─────────────────┐
                        │   Context       │───▶│   Gemini        │
-                       │   Assembly      │    │   GPT-4.1       │
+                       │   Assembly      │    │   Flash Lite    │
                        └─────────────────┘    └─────────────────┘
                                 │                       │
                                 ▼                       ▼
@@ -456,7 +457,9 @@ User Action
 1. **Gemini API Integration**
 
    - **Embeddings**: `gemini-embedding-001` for vector generation
-   - **Chat**: `gemini-flash-latest` for response generation
+   - **Chat**: `gemini-flash-lite-latest` for response generation (switched from
+     `gemini-flash-latest`, whose free-tier quota turned out to be a
+     project-wide 20 requests/day — see [Evaluation & Guardrails](#evaluation--guardrails))
    - **Rate Limiting**: Free-tier quota per model on Google AI Studio
 
 2. **Email Service Integration**
@@ -588,7 +591,7 @@ This comprehensive flow ensures that PaperMind provides a seamless, efficient, a
 
 ### External Services
 
-- **Gemini API**: `gemini-flash-latest` for chat, `gemini-embedding-001` for embeddings
+- **Gemini API**: `gemini-flash-lite-latest` for chat, `gemini-embedding-001` for embeddings
 - **Qdrant**: Vector database for semantic search
 - **MongoDB Atlas**: Cloud database hosting
 - **Email Service**: Nodemailer with SMTP configuration
@@ -603,6 +606,86 @@ PaperMind uses a credit-based system to manage usage and costs:
 - **Unused credits roll over** to the next month
 - **Real-time tracking** of credit consumption
 - **Usage analytics** and efficiency recommendations
+
+---
+
+## Evaluation & Guardrails
+
+### Retrieval evaluation
+
+Chunking strategy is usually picked by convention, not measured. `server/eval/`
+is a small, real evaluation harness that compares four chunking strategies —
+plus a re-ranking pass — against a hand-checked question set, so the choice
+of "recursive splitting" used in production is backed by a number instead of
+a guess.
+
+**Setup:** 30 questions (10 per paper, mixing factual/paraphrase/multi-hop
+types) written against 3 real papers (*Attention Is All You Need*, *BERT*,
+*RAG*), each grounded in a specific page and a `gold_quote` checked by hand
+against the extracted PDF text. Retrieval is pooled across all 3 papers per
+strategy — a query has to out-rank chunks from two unrelated papers to score
+a hit, not just search within its own document.
+
+**Metric:** Hit@k (is a truly relevant chunk in the top k?) and MRR@10, where
+relevance is token-overlap against the gold quote (≥60%) rather than exact
+substring match — PDF text extraction introduces whitespace/hyphenation
+noise that breaks naive matching.
+
+| Chunking strategy | Hit@1 | Hit@3 | Hit@5 | Hit@10 | MRR@10 |
+|---|---|---|---|---|---|
+| Fixed 300-token, no overlap | 73% | 83% | 90% | 93% | 0.80 |
+| Fixed 300-token, 50-token overlap | 70% | 93% | 93% | 97% | 0.81 |
+| Recursive split (production) | 67% | 83% | 83% | 93% | 0.76 |
+| Recursive split + Gemini re-rank | 67% | 90% | 93% | 97% | 0.78 |
+
+Re-run with `npm run eval` in `server/`; results are disk-cached by text
+hash, so a re-run only pays for genuinely new text.
+
+**Honest findings, not the flattering ones:**
+- On this dataset, production's recursive splitter is *not* the best
+  performer — the naive fixed-window baselines score as well or better.
+  Recursive splitting still respects sentence/paragraph boundaries (which
+  matters for readability of the returned source snippet), but the raw
+  retrieval numbers don't currently justify it over a simpler approach.
+- The Gemini re-ranker gives a real, modest lift on top of recursive
+  splitting (Hit@3: 83%→90%, Hit@5: 83%→93%), at the cost of one extra LLM
+  call per query.
+- A fifth strategy — semantic chunking (embedding sentence-windows, cutting
+  chunks at statistical similarity breakpoints) — is implemented in
+  `eval/strategies.js` but its result is still pending: `gemini-embedding-001`'s
+  free-tier **daily** request quota kept getting exhausted mid-run during
+  development. Rather than fabricate or omit that row silently, the harness
+  detects the failure explicitly and reports it as "pending", not "0%".
+- 30 questions over 3 papers is a smoke test, not a benchmark — enough to
+  compare strategies against each other honestly, not enough to generalize
+  beyond this corpus.
+
+### Guardrails
+
+- **Prompt injection defense:** retrieved chunks are wrapped in explicit
+  `<source n="X" from="...">` delimiters with an instruction that content
+  inside is data, never instructions — even if a chunk's text reads like a
+  command (a PDF can contain "ignore all previous instructions" just as
+  easily as a user can type it).
+- **Query pre-screening:** obvious jailbreak/injection patterns are
+  regex-matched and rejected with a canned response *before* spending a
+  Gemini call — zero cost for an attempted attack.
+- **Explicit safety settings:** Gemini's `safetySettings` are configured
+  directly rather than relying on undocumented defaults.
+- **Still open:** ingestion-time scanning of uploaded documents for
+  injection payloads, per-user rate limiting, and a dedicated adversarial
+  eval set with an attack-success-rate metric (tracked in `PLAN.md`).
+
+### A reliability bug found via the eval harness
+
+Building the re-ranker surfaced a real production issue: `gemini-flash-latest`
+currently resolves to `gemini-3.8-flash`, whose free-tier quota is a
+project-wide **20 requests/day** — confirmed by reading the raw 429 response
+body, not assumed. The exact same model string was used for the live chat
+feature, which explains "sometimes it answers, sometimes it doesn't" far
+better than transient server load does. Production now uses
+`gemini-flash-lite-latest`, a separate model with its own, much less
+constrained free-tier quota.
 
 ---
 
