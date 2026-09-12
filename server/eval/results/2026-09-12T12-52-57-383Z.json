@@ -1,0 +1,50 @@
+{
+  "questionCount": 30,
+  "docs": [
+    "attention-is-all-you-need",
+    "bert",
+    "rag"
+  ],
+  "results": {
+    "fixed-no-overlap": {
+      "chunkCount": 171,
+      "hitRateAtK": {
+        "1": 0.7333333333333333,
+        "3": 0.8333333333333334,
+        "5": 0.9,
+        "10": 0.9333333333333333
+      },
+      "mrr": 0.8030952380952381,
+      "n": 30
+    },
+    "fixed-overlap": {
+      "chunkCount": 189,
+      "hitRateAtK": {
+        "1": 0.7,
+        "3": 0.9333333333333333,
+        "5": 0.9333333333333333,
+        "10": 0.9666666666666667
+      },
+      "mrr": 0.8097222222222222,
+      "n": 30
+    },
+    "recursive": {
+      "chunkCount": 196,
+      "hitRateAtK": {
+        "1": 0.6666666666666666,
+        "3": 0.8333333333333334,
+        "5": 0.8333333333333334,
+        "10": 0.9333333333333333
+      },
+      "mrr": 0.7632275132275131,
+      "n": 30
+    }
+  },
+  "failed": [
+    {
+      "key": "semantic",
+      "label": "Semantic chunking",
+      "reason": "Embedding batch failed after 8 attempts: [GoogleGenerativeAI Error]: Error fetching from https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:batchEmbedContents: [429 Too Many Requests] You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits. To monitor your current usage, head to: https://ai.dev/rate-limit. "
+    }
+  ]
+}

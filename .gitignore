@@ -8,6 +8,15 @@ server/temp/*
 
 # frontend
 
+# eval harness - disk-cached embeddings are a large, purely local speed/cost
+# optimization (re-derivable from the dataset + Gemini), not source or a
+# result worth version-controlling. Timestamped run JSON + summary.md ARE
+# committed - they're the actual evidence of a real run.
+server/eval/results/embeddings.cache.json
+# Third-party paper PDFs - re-downloadable (see extract-papers.mjs), no need
+# to carry the binaries; the extracted .pages.json text is what's committed.
+server/eval/datasets/papers/*.pdf
+
 # Logs
 logs
 *.log

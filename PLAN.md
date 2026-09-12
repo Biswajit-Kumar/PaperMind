@@ -54,7 +54,34 @@ fabricated activity — worse than no stats page.
 
 ---
 
-## Workstream 3 — Evaluation harness (headline)  ☐
+## Workstream 3 — Evaluation harness (headline)  ◐
+
+**Actual scope shipped (smaller than originally planned, deliberately):** 3
+papers (Attention, BERT, RAG — LoRA/DPR dropped to keep the free-tier
+embedding quota affordable), 30 questions (10/paper) instead of 50. Harness,
+dataset, and metrics are real and running; see `server/eval/results/summary.md`
+for the current numbers.
+
+**Real (not simulated) result so far — 3 of 4 base strategies, on 30
+questions pooled across all 3 papers:**
+
+| Chunking strategy | Hit@1 | Hit@3 | Hit@5 | Hit@10 | MRR@10 |
+|---|---|---|---|---|---|
+| Fixed 300-token, no overlap | 73% | 83% | 90% | 93% | 0.80 |
+| Fixed 300-token, 50-token overlap | 70% | 93% | 93% | 97% | 0.81 |
+| Recursive split (production) | 67% | 83% | 83% | 93% | 0.76 |
+
+Semantic chunking and the Gemini re-ranker rows are blocked, not broken:
+`gemini-embedding-001` and `gemini-flash-latest` both hit their free-tier
+**daily** request quotas (confirmed via direct API probing, not a guess) mid-run.
+Re-run `npm run eval` once the quota resets (both models' request counters
+reset daily) to fill in the remaining two rows — the disk cache means the
+3 completed strategies cost zero new API calls on the next run.
+
+**Interesting honest finding, not the hoped-for one:** production's own
+`recursive` splitter scores *lower* than the naive fixed-window baselines on
+this dataset so far. Worth digging into in the README once semantic/rerank
+fill in the full picture — don't paper over it.
 
 ### 3a. Dataset — `server/eval/dataset.jsonl`
 
@@ -167,7 +194,26 @@ run + writeup 2–3 hrs.
 
 ---
 
-## Workstream 4 — Guardrails  ☐
+## Workstream 4 — Guardrails  ◐
+
+**Free parts shipped:** explicit `<source n="X" from="...">` delimiters
+framing retrieved content as DATA not instructions in `chat.service.js`;
+explicit Gemini `safetySettings`; regex-based query pre-screening
+(`looksLikeInjectionAttempt`) rejecting jailbreak-style queries before
+spending a Gemini call, with zero-cost canned response on a match.
+Ingestion-time scanning, per-user rate limiting, and the adversarial eval
+set (below) are still open.
+
+**Separate production bug found and fixed along the way:** `gemini-flash-latest`
+currently resolves to `gemini-3.8-flash`, whose free-tier quota is a
+project-wide **20 requests/day** — confirmed by direct API probing during
+eval development (the reranker's own calls tripped it). The exact same
+model string was used in production `chat.service.js`, meaning the live
+chat feature was likely capped at ~20 answers/day, not just occasionally
+503-overloaded. Switched production (and the eval reranker) to
+`gemini-flash-lite-latest` (→ `gemini-3.5-flash-lite`), which has its own,
+far less constrained free-tier quota bucket — confirmed working immediately
+after the flash model's daily quota was fully exhausted.
 
 Three layers. Fold the free parts into Workstream 3; the rest is its own pass.
 
@@ -218,14 +264,14 @@ limiting + adversarial set ~1.5 days.
 
 1. ☑ Credit reset — removes the dead-end
 2. ☑ Stats cleanup — removes the credibility landmine (all `/stats` numbers now real)
-3. ☐ Guardrails free parts: delimiter prompting, `safetySettings`, groundedness-from-citations (~1 hr)
-4. ☐ Eval scaffold: in-memory index + metrics + embedding cache (½ day)
-5. ☐ Dataset — manual, in parallel with 4 (¾ day)
-6. ☐ Run baselines → first real numbers
-7. ☐ Semantic chunking → rerun
-8. ☐ Re-ranker → rerun
+3. ☑ Guardrails free parts: delimiter prompting, `safetySettings`, query pre-screening
+4. ☑ Eval scaffold: in-memory index + metrics + embedding cache
+5. ☑ Dataset — 30 questions, 3 papers, human-verified against extracted page text
+6. ☑ Run baselines → first real numbers (3/4 base strategies; see Workstream 3)
+7. ☐ Semantic chunking → rerun (blocked on daily embedding quota reset)
+8. ☐ Re-ranker → rerun (blocked on daily quota reset; model switched to avoid re-hitting the 20/day wall)
 9. ☐ Guardrails Workstream 4 proper + adversarial eval set (~1.5 days)
-10. ☐ README tables + interpretation
+10. ☐ README tables + interpretation (once semantic/rerank fill in)
 
 **Total ≈ 30–35 hrs.** Commit each step separately — real extension work,
 helps the thin contribution graph.
